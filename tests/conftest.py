@@ -83,7 +83,6 @@ _SCRIPTS = [
     "generate_embeddings.py",
     "put_together_embeddings.py",
     "generate_snapshots.py",
-    "run_streaming.py",
     "train_champollion.py",
     "purge_subject.py",
     "prune_failed_subjects.py",

@@ -25,7 +25,6 @@ PUBLIC_TOOLS = [
     "start_config",
     "start_embeddings",
     "start_combine",
-    "start_streaming",
     "start_training",
     "purge_subject",
     "prune_failed_subjects",
@@ -57,13 +56,6 @@ def _tool_kwargs(tool: str, base: Path) -> dict:
         "start_config": {"crop_path": str(base / "crops"), "dataset": "ds"},
         "start_embeddings": {"models_path": str(base / "models"), "datasets_root": str(base / "ds")},
         "start_combine": {"embeddings_source": str(base / "emb"), "output_path": str(base / "combined")},
-        "start_streaming": {
-            "input_dir": str(base / "in"),
-            "output_dir": str(base / "out"),
-            "dataset": "ds",
-            "path_to_graph": _GRAPH,
-            "path_sk_with_hull": _SK_HULL,
-        },
         "start_training": {"dataset": "ds", "region": "S.C.-sylv.", "output_dir": str(base / "models" / "r")},
         "purge_subject": {"derivatives": str(base / "deriv"), "subject": "sub-01"},
         "prune_failed_subjects": {"output": str(base / "deriv"), "qc": str(base / "qc.tsv")},
@@ -129,12 +121,6 @@ class TestHfToken:
         await stages.start_embeddings(**_tool_kwargs("start_embeddings", tmp_path))
         assert launches[0]["env"].get("HF_TOKEN") == "hf_secret"
 
-    async def test_streaming_passes_hf_token(self, pipeline_dir, tmp_path, launches, monkeypatch):
-        """REQ-MCP-COV-05: start_streaming keeps HF_TOKEN in the subprocess environment."""
-        monkeypatch.setenv("HF_TOKEN", "hf_secret")
-        await stages.start_streaming(**_tool_kwargs("start_streaming", tmp_path))
-        assert launches[0]["env"].get("HF_TOKEN") == "hf_secret"
-
     @pytest.mark.parametrize("tool", HF_STRIPPING_TOOLS)
     async def test_tool_strips_hf_token(self, pipeline_dir, tmp_path, launches, monkeypatch, tool):
         """REQ-MCP-COV-06: the listed tools launch without HF_TOKEN in the subprocess environment."""
@@ -171,15 +157,13 @@ class TestRelativePathRefusal:
             ("purge_subject", "derivatives"),
             ("prune_failed_subjects", "output"),
             ("prune_failed_subjects", "qc"),
-            ("start_streaming", "input_dir"),
-            ("start_streaming", "output_dir"),
             ("start_combine", "embeddings_source"),
             ("start_combine", "output_path"),
             ("start_embeddings", "datasets_root"),
         ],
     )
     async def test_relative_path_rejected(self, pipeline_dir, tmp_path, launches, tool, param):
-        """REQ-MCP-COV-09: a relative value raises a ToolError naming the parameter; no job."""
+        """REQ-MCPSTREAM-BDRABCZUK-6B358BF2D05C: a relative value raises a ToolError naming the parameter; no job."""
         kwargs = _tool_kwargs(tool, tmp_path)
         kwargs[param] = "relative/path"
         with pytest.raises(ToolError, match=param):
@@ -198,42 +182,6 @@ class TestCombineArgv:
         argv = launches[0]["argv"]
         assert Path(argv[1]).name == "put_together_embeddings.py"
         assert _script_args(argv) == [kwargs["embeddings_source"], "--output_path", kwargs["output_path"]]
-
-
-# --- REQ-MCP-COV-11 / -12: start_streaming command ---
-
-
-class TestStreamingArgv:
-    @pytest.mark.parametrize(
-        "expected",
-        [
-            ["--n-workers", "0"],
-            ["--worker-timeout", "7200"],
-            ["--poll-interval", "10"],
-            ["--dataset-localization", "local"],
-            ["--short-name", "eval"],
-            ["--embeddings-path", "champollion_V1"],
-        ],
-    )
-    async def test_defaults(self, pipeline_dir, tmp_path, launches, expected):
-        """REQ-MCP-COV-11: without optional arguments, the documented defaults are passed."""
-        await stages.start_streaming(**_tool_kwargs("start_streaming", tmp_path))
-        assert _contains_run(launches[0]["argv"], expected), launches[0]["argv"]
-
-    @pytest.mark.parametrize(
-        ("name", "value", "expected"),
-        [
-            ("bids", True, ["--bids"]),
-            ("sk_qc_path", "/abs/qc.tsv", ["--sk-qc-path", "/abs/qc.tsv"]),
-            ("models_path", "/abs/models", ["--models-path", "/abs/models"]),
-            ("datasets_root", "/abs/datasets", ["--datasets-root", "/abs/datasets"]),
-            ("dry_run", True, ["--dry-run"]),
-        ],
-    )
-    async def test_forwards_optional_argument(self, pipeline_dir, tmp_path, launches, name, value, expected):
-        """REQ-MCP-COV-12: a supplied optional argument becomes its documented flag (plus value)."""
-        await stages.start_streaming(**_tool_kwargs("start_streaming", tmp_path), **{name: value})
-        assert _contains_run(launches[0]["argv"], expected), launches[0]["argv"]
 
 
 # --- REQ-MCP-COV-13 / -14: purge_subject and prune_failed_subjects commands ---
