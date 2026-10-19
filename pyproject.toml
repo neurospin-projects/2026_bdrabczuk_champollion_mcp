@@ -3,6 +3,7 @@ name = "champollion-sulcal-mcp"
 version = "0.1.0"
 description = "FastMCP server wrapping the Champollion sulcal embedding pipeline"
 requires-python = ">=3.11,<3.13"
+license = { text = "CeCILL-B" }
 authors = [{name = "Neurospin"}]
 dependencies = [
   "fastmcp>=3.2.4",
