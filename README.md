@@ -130,3 +130,7 @@ pixi run lint-fix      # ruff check --fix
 pixi run format         # ruff format
 ```
 
+
+## License
+
+Released under the CeCILL-B free software licence, the same as `champollion_pipeline`. See [LICENSE](LICENSE).
