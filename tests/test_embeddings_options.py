@@ -21,12 +21,10 @@ from champollion_sulcal_mcp.tools import pipeline, stages
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 
-# Real sibling checkout, resolved at import time (the pipeline_dir fixture later
-# points CHAMPOLLION_PIPELINE_DIR at a fake one).
-_REAL_PIPELINE_DIR = Path(
-    os.environ.get("CHAMPOLLION_PIPELINE_DIR") or Path(__file__).resolve().parents[2] / "champollion_pipeline"
-)
-_REAL_PIPELINE_PYTHON = _REAL_PIPELINE_DIR / ".pixi" / "envs" / "default" / "bin" / "python"
+# Real checkout named by CHAMPOLLION_PIPELINE_DIR, read at import time (the pipeline_dir
+# fixture later points the variable at a fake one); None when the variable is unset.
+_ENV_PIPELINE_DIR = os.environ.get("CHAMPOLLION_PIPELINE_DIR")
+_REAL_PIPELINE_DIR = Path(_ENV_PIPELINE_DIR) if _ENV_PIPELINE_DIR else None
 
 _real_sleep = asyncio.sleep
 
@@ -93,14 +91,17 @@ print("PARSED=" + json.dumps(vars(args)))
 class TestEmbeddingsArgvMatchesPipelineParser:
     async def test_full_argv_parses_into_supplied_values(self, pipeline_dir, tmp_path, launches):
         """REQ-MCP-EMBOPT-05: argv with each optional parameter parses into the supplied values."""
-        if not _REAL_PIPELINE_PYTHON.exists():
-            pytest.skip(f"champollion_pipeline pixi interpreter not found: {_REAL_PIPELINE_PYTHON}")
+        if _REAL_PIPELINE_DIR is None:
+            pytest.skip("CHAMPOLLION_PIPELINE_DIR is not set")
+        real_python = _REAL_PIPELINE_DIR / ".pixi" / "envs" / "default" / "bin" / "python"
+        if not real_python.exists():
+            pytest.skip(f"champollion_pipeline pixi interpreter not found: {real_python}")
         kwargs = _embeddings_kwargs(tmp_path)
         await stages.start_embeddings(**kwargs, **_ALL_OPTIONS)
         script_args = launches[0]["argv"][2:]
 
         proc = subprocess.run(
-            [str(_REAL_PIPELINE_PYTHON), "-c", _PARSE_SNIPPET, json.dumps(script_args)],
+            [str(real_python), "-c", _PARSE_SNIPPET, json.dumps(script_args)],
             cwd=str(_REAL_PIPELINE_DIR),
             capture_output=True,
             text=True,

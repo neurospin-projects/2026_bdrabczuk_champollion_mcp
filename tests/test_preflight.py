@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from champollion_sulcal_mcp import preflight
@@ -12,15 +15,28 @@ def test_resolve_uses_env(tmp_path, monkeypatch):
     assert result == tmp_path
 
 
+# --- REQ-MCPSELF-BDRABCZUK-EFA902B509A8: CHAMPOLLION_PIPELINE_DIR is required ---
+
+
 @pytest.mark.unit
-def test_resolve_missing_raises(monkeypatch):
-    monkeypatch.delenv("CHAMPOLLION_PIPELINE_DIR", raising=False)
+@pytest.mark.parametrize("case", ["unset", "empty", "file", "missing"])
+def test_resolve_without_existing_dir_raises_naming_variable(case, tmp_path, monkeypatch):
+    """Unless CHAMPOLLION_PIPELINE_DIR names an existing directory, a FileNotFoundError names the variable.
 
-    def _raise():
-        raise FileNotFoundError("not found")
+    A champollion_pipeline directory is planted where a sibling-folder fallback would look
+    (three levels above the module file), so no fallback may hide the missing variable.
+    """
+    monkeypatch.setattr(preflight, "__file__", str(tmp_path / "repo" / "src" / "pkg" / "preflight.py"))
+    (tmp_path / "champollion_pipeline").mkdir()
+    a_file = tmp_path / "a_file"
+    a_file.write_text("")
+    if case == "unset":
+        monkeypatch.delenv("CHAMPOLLION_PIPELINE_DIR", raising=False)
+    else:
+        value = {"empty": "", "file": str(a_file), "missing": str(tmp_path / "missing")}[case]
+        monkeypatch.setenv("CHAMPOLLION_PIPELINE_DIR", value)
 
-    monkeypatch.setattr(preflight, "resolve_pipeline_dir", _raise)
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="CHAMPOLLION_PIPELINE_DIR"):
         preflight.resolve_pipeline_dir()
 
 
@@ -72,13 +88,11 @@ def test_summarize_finds_all_scripts_in_package_layout(tmp_path, monkeypatch):
 
 
 @pytest.mark.integration
-def test_stage_scripts_exist_in_real_pipeline_checkout(monkeypatch):
-    """Against the real sibling checkout, every STAGE_SCRIPTS entry is found under scripts_dir."""
-    monkeypatch.delenv("CHAMPOLLION_PIPELINE_DIR", raising=False)
-    try:
-        loc = preflight.detect()
-    except FileNotFoundError:
-        pytest.skip("champollion_pipeline sibling checkout not available")
+def test_stage_scripts_exist_in_real_pipeline_checkout():
+    """Against the real checkout named by CHAMPOLLION_PIPELINE_DIR, every STAGE_SCRIPTS entry is under scripts_dir."""
+    if not os.environ.get("CHAMPOLLION_PIPELINE_DIR"):
+        pytest.skip("CHAMPOLLION_PIPELINE_DIR is not set")
+    loc = preflight.detect()
 
     missing = [fname for fname in preflight.STAGE_SCRIPTS.values() if not (loc.scripts_dir / fname).is_file()]
     assert missing == [], f"scripts not found under {loc.scripts_dir}: {missing}"
@@ -90,3 +104,18 @@ def test_hf_token_detection(monkeypatch):
     assert preflight.check_hf_token_present() is True
     monkeypatch.delenv("HF_TOKEN")
     assert preflight.check_hf_token_present() is False
+
+
+# --- REQ-MCPSELF-BDRABCZUK-2F4EAE4E90B7: README marks the variable as required ---
+
+README = Path(__file__).resolve().parent.parent / "README.md"
+
+
+@pytest.mark.unit
+def test_readme_marks_pipeline_dir_required():
+    """The Default cell of the README Configuration row for CHAMPOLLION_PIPELINE_DIR reads "Required"."""
+    rows = [line for line in README.read_text().splitlines() if line.startswith("| `CHAMPOLLION_PIPELINE_DIR` |")]
+    assert len(rows) == 1, rows
+    cells = [cell.strip() for cell in rows[0].strip().strip("|").split("|")]
+    assert len(cells) == 3, cells
+    assert cells[2].strip("*_ ").lower() == "required", cells[2]
