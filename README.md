@@ -84,7 +84,7 @@ pixi install
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `CHAMPOLLION_PIPELINE_DIR` | Absolute path to the `champollion_pipeline` repo | Falls back to `../champollion_pipeline` relative to this package |
+| `CHAMPOLLION_PIPELINE_DIR` | Absolute path to the `champollion_pipeline` repo | Required |
 | `HF_TOKEN` | HuggingFace token | Passed through only to the `embeddings` and `streaming` stages; stripped from every other stage's subprocess environment |
 | `BRAINVISA` / `BRAINVISA_SHARE` | BrainVISA install location / share dir | Auto-injected from the pipeline's pixi environment if not already set in the environment |
 

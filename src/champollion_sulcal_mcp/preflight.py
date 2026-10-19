@@ -28,19 +28,14 @@ class PipelineLocation(BaseModel):
 
 def resolve_pipeline_dir() -> Path:
     env_val = os.environ.get("CHAMPOLLION_PIPELINE_DIR")
-    if env_val:
-        p = Path(env_val)
-        if p.is_dir():
-            return p
-        raise FileNotFoundError(f"CHAMPOLLION_PIPELINE_DIR={env_val!r} does not exist or is not a directory.")
-    # Sibling directory fallback
-    this_file = Path(__file__).resolve()
-    sibling = this_file.parents[3] / "champollion_pipeline"
-    if sibling.is_dir():
-        return sibling
-    raise FileNotFoundError(
-        "Cannot locate champollion_pipeline directory. Set CHAMPOLLION_PIPELINE_DIR env var to its absolute path."
-    )
+    if not env_val:
+        raise FileNotFoundError(
+            "CHAMPOLLION_PIPELINE_DIR is not set. Set it to the absolute path of the champollion_pipeline checkout."
+        )
+    p = Path(env_val)
+    if p.is_dir():
+        return p
+    raise FileNotFoundError(f"CHAMPOLLION_PIPELINE_DIR={env_val!r} does not exist or is not a directory.")
 
 
 def detect() -> PipelineLocation:
