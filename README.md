@@ -27,7 +27,6 @@ Any MCP client can drive it. The repository also ships its own Claude Code subag
 | 5 | `start_combine` | Collect per-region embedding CSVs into a single output directory |
 | 6 | `start_snapshots` | Render sulcal graph meshes, cortical tile masks, and UMAP plots |
 | — | `start_pipeline` | Run stages 1–6 sequentially as one umbrella job (stages skippable) |
-| — | `start_streaming` | Scan-centric mode: one worker per scan runs stages 2–4 in parallel; combine runs once after all workers drain |
 | — | `start_training` | Train a self-supervised `champollion_V1` encoder for one region |
 
 ## Project layout
@@ -37,7 +36,7 @@ src/champollion_sulcal_mcp/
 ├── server.py            # FastMCP instance, tool registration, entry point (main())
 ├── preflight.py          # locates the champollion_pipeline repo + its scripts/submodules
 ├── job_store.py           # JobState/JobProgress models, JSON job file persistence
-├── runner.py               # subprocess launch, log streaming, progress parsing, cancel
+├── runner.py               # subprocess launch, log capture, progress parsing, cancel
 └── tools/
     ├── stages.py           # one start_<stage> tool per pipeline stage + maintenance tools
     ├── pipeline.py          # start_pipeline composite/umbrella job orchestration
@@ -46,7 +45,7 @@ src/champollion_sulcal_mcp/
 agents/
 └── champollion-pipeline.md  # Claude Code subagent definition for this MCP server
 skills/
-├── run-pipeline/             # SKILL.md guiding stage-centric vs streaming execution
+├── run-pipeline/             # SKILL.md guiding pipeline runs and their parameters
 ├── monitor/                   # SKILL.md for the job-polling loop
 └── debug/                      # SKILL.md + known error patterns for failure diagnosis
 tests/                           # pytest suite with fake_pipeline_dir / recording_runner fixtures
@@ -60,8 +59,6 @@ Registered in `server.py`:
 
 **Composite pipeline** — `start_pipeline`
 
-**Streaming** — `start_streaming`
-
 **Maintenance** — `purge_subject` (remove a subject's cortical_tiles derivatives), `prune_failed_subjects` (remove outputs for subjects that failed QC)
 
 **Job lifecycle** — `get_job_status`, `list_jobs`, `cancel_job`, `get_job_log`
@@ -72,7 +69,7 @@ Registered in `server.py`:
 
 - Python 3.11 or 3.12
 - [pixi](https://pixi.sh)
-- A checkout of the **[`champollion_pipeline`](https://github.com/neurospin/champollion_pipeline)** repository (not included here) — must contain the stage scripts under `src/` (`generate_morphologist_graphs.py`, `run_cortical_tiles.py`, `generate_champollion_config.py`, `generate_embeddings.py`, `put_together_embeddings.py`, `generate_snapshots.py`, `train_champollion.py`, `run_streaming.py`) and the `external/champollion_V1` and `external/cortical_tiles` submodules.
+- A checkout of the **[`champollion_pipeline`](https://github.com/neurospin/champollion_pipeline)** repository (not included here) — must contain the stage scripts under `src/` (`generate_morphologist_graphs.py`, `run_cortical_tiles.py`, `generate_champollion_config.py`, `generate_embeddings.py`, `put_together_embeddings.py`, `generate_snapshots.py`, `train_champollion.py`) and the `external/champollion_V1` and `external/cortical_tiles` submodules.
 
 ## Installation
 
@@ -84,13 +81,13 @@ pixi install
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `CHAMPOLLION_PIPELINE_DIR` | Absolute path to the `champollion_pipeline` repo | Falls back to `../champollion_pipeline` relative to this package |
-| `HF_TOKEN` | HuggingFace token | Passed through only to the `embeddings` and `streaming` stages; stripped from every other stage's subprocess environment |
+| `CHAMPOLLION_PIPELINE_DIR` | Absolute path to the `champollion_pipeline` repo | Required |
+| `HF_TOKEN` | HuggingFace token | Passed through only to the `embeddings` stage; stripped from every other stage's subprocess environment |
 | `BRAINVISA` / `BRAINVISA_SHARE` | BrainVISA install location / share dir | Auto-injected from the pipeline's pixi environment if not already set in the environment |
 
 ## Running
 
-This is a stdio server meant to be launched by an MCP client (for example Claude Code, through its MCP server configuration), not run interactively on its own:
+This is a stdio server meant to be launched by an MCP client or coding agent (see [Coding agents integration](#coding-agents-integration) for ready-to-paste configurations), not run interactively on its own:
 
 ```bash
 pixi run run                  # python -m champollion_sulcal_mcp.server
@@ -98,14 +95,138 @@ pixi run run                  # python -m champollion_sulcal_mcp.server
 champollion-sulcal-mcp
 ```
 
-## Claude Code integration
+## Coding agents integration
 
-Beyond the raw MCP tools, this repo ships assets for using the pipeline directly from Claude Code:
+Any coding agent or MCP client that can launch a local stdio server can use this server. Every configuration
+below starts it with `pixi run --manifest-path /path/to/champollion_sulcal_mcp/pixi.toml run`, so it works from
+any working directory. Replace the `/path/to/...` placeholders with absolute paths.
+
+- `CHAMPOLLION_PIPELINE_DIR` is required: the absolute path of your `champollion_pipeline` checkout.
+- `HF_TOKEN` is optional: set it only to download models from Hugging Face. Prefer an environment reference over
+  writing the token in a configuration file, and never commit a token.
+- The first start can take a few seconds while pixi resolves the environment, so the snippets raise the client's
+  start-up timeout.
+
+### Claude Code
+
+Register it with the CLI (user scope shown; `--scope project` writes a shared `.mcp.json` instead):
+
+```bash
+claude mcp add --transport stdio --scope user \
+  --env CHAMPOLLION_PIPELINE_DIR=/path/to/champollion_pipeline \
+  champollion-sulcal \
+  -- pixi run --manifest-path /path/to/champollion_sulcal_mcp/pixi.toml run
+```
+
+or add it to `.mcp.json` at the root of your project:
+
+```json
+{
+  "mcpServers": {
+    "champollion-sulcal": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/champollion_sulcal_mcp/pixi.toml", "run"],
+      "env": {
+        "CHAMPOLLION_PIPELINE_DIR": "/path/to/champollion_pipeline",
+        "HF_TOKEN": "${HF_TOKEN:-}"
+      }
+    }
+  }
+}
+```
+
+This repository also ships Claude Code assets:
 
 - **`agents/champollion-pipeline.md`** — a subagent scoped to exactly the MCP tools it needs, with an operational playbook: always preflight first, never guess paths, default output layout, per-stage required parameters, a known-error-pattern table, and the exact CLI invocation each tool wraps.
-- **`skills/run-pipeline`** — guides choosing stage-centric vs. streaming execution and gathering the right parameters.
+- **`skills/run-pipeline`** — guides choosing between the full pipeline and individual stages, and gathering the right parameters.
 - **`skills/monitor`** — a poll-every-30-seconds monitoring loop with per-job-type progress reporting.
 - **`skills/debug`** — systematic failure diagnosis: read the full log, match against known error patterns, report root cause and fix.
+
+They are Markdown files: other coding agents can read them as plain instructions, for example by pointing their
+own agent or rules file at them.
+
+### OpenCode
+
+In `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "champollion-sulcal": {
+      "type": "local",
+      "command": ["pixi", "run", "--manifest-path", "/path/to/champollion_sulcal_mcp/pixi.toml", "run"],
+      "enabled": true,
+      "timeout": 30000,
+      "environment": {
+        "CHAMPOLLION_PIPELINE_DIR": "/path/to/champollion_pipeline",
+        "HF_TOKEN": "{env:HF_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### Mistral Vibe
+
+In `./.vibe/config.toml` (project) or `~/.vibe/config.toml` (global). Vibe does not expand environment
+variables in this file; add `"HF_TOKEN" = "<your token>"` to `env` only in a private, uncommitted config.
+
+```toml
+[[mcp_servers]]
+name = "champollion-sulcal"
+transport = "stdio"
+command = "pixi"
+args = ["run", "--manifest-path", "/path/to/champollion_sulcal_mcp/pixi.toml", "run"]
+startup_timeout_sec = 60
+env = { "CHAMPOLLION_PIPELINE_DIR" = "/path/to/champollion_pipeline" }
+```
+
+### Codex
+
+In `~/.codex/config.toml` (global) or `.codex/config.toml` (trusted project); `env_vars` forwards `HF_TOKEN`
+from your shell without storing it in the file:
+
+```toml
+[mcp_servers.champollion-sulcal]
+command = "pixi"
+args = ["run", "--manifest-path", "/path/to/champollion_sulcal_mcp/pixi.toml", "run"]
+startup_timeout_sec = 60
+env_vars = ["HF_TOKEN"]
+
+[mcp_servers.champollion-sulcal.env]
+CHAMPOLLION_PIPELINE_DIR = "/path/to/champollion_pipeline"
+```
+
+or from the command line:
+
+```bash
+codex mcp add champollion-sulcal \
+  --env CHAMPOLLION_PIPELINE_DIR=/path/to/champollion_pipeline \
+  -- pixi run --manifest-path /path/to/champollion_sulcal_mcp/pixi.toml run
+```
+
+### Other MCP clients
+
+Most other clients (Claude Desktop, Cursor, and others) read the common `mcpServers` format, for example
+Claude Desktop's `claude_desktop_config.json` or Cursor's `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "champollion-sulcal": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/champollion_sulcal_mcp/pixi.toml", "run"],
+      "env": {
+        "CHAMPOLLION_PIPELINE_DIR": "/path/to/champollion_pipeline"
+      }
+    }
+  }
+}
+```
+
+If your client has no `env` setting, export `CHAMPOLLION_PIPELINE_DIR` (and optionally `HF_TOKEN`) in the
+environment the client is started from.
 
 ## Job tracking
 
@@ -130,3 +251,10 @@ pixi run lint-fix      # ruff check --fix
 pixi run format         # ruff format
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, checks, branch model and how to report issues.
+
+## License
+
+Released under the CeCILL-B free software licence, the same as `champollion_pipeline`. See [LICENSE](LICENSE).

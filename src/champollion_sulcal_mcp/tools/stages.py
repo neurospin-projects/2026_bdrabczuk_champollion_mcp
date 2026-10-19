@@ -7,7 +7,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from .. import preflight, runner
-from ..roots import get_roots, validate_within_roots
+from ..roots import get_roots, validate_subject_subpath, validate_within_roots
 
 
 def _require_absolute(path: str, name: str) -> None:
@@ -145,8 +145,8 @@ async def start_cortical_tiles(
     roots = await get_roots(ctx)
     validate_within_roots(input_dir, roots, "input_dir")
     validate_within_roots(output_dir, roots, "output_dir")
-    validate_within_roots(path_to_graph, roots, "path_to_graph")
-    validate_within_roots(path_sk_with_hull, roots, "path_sk_with_hull")
+    validate_subject_subpath(path_to_graph, roots, "path_to_graph")
+    validate_subject_subpath(path_sk_with_hull, roots, "path_sk_with_hull")
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     try:
@@ -207,6 +207,7 @@ async def start_config(
     output: str | None = None,
     external_config: str | None = None,
     external_crops: bool = False,
+    masks: str | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 3: generate Champollion dataset YAML configuration files.
@@ -218,7 +219,8 @@ async def start_config(
     (default {configs root}/dataset_localization/). Each is forwarded only when
     supplied, so the pipeline defaults apply otherwise. When supplied, `output` and
     `external_config` must be absolute paths and, when the MCP client declares
-    roots, inside a declared root.
+    roots, inside a declared root. `masks` is the mask version tag forwarded as
+    --masks; it must match the stage-2 masks (script default canonical_25).
     """
     _require_absolute(crop_path, "crop_path")
     if output:
@@ -250,6 +252,8 @@ async def start_config(
         argv += ["--external-config", external_config]
     if external_crops:
         argv.append("--external_crops")
+    if masks:
+        argv += ["--masks", masks]
 
     output_dir = output or crop_path
 
@@ -283,9 +287,20 @@ async def start_embeddings(
     regions: list[str] | None = None,
     run_cka: bool = False,
     cortical_version: str | None = None,
+    profiling: bool = False,
+    no_cache: bool = False,
+    legacy: bool = False,
+    use_last_checkpoint: bool = False,
     ctx: Context | None = None,
 ) -> dict:
-    """Launch Stage 4: compute sulcal embeddings across all 56 model folds (28 regions × 2 hemispheres)."""
+    """Launch Stage 4: compute sulcal embeddings across all 56 model folds (28 regions × 2 hemispheres).
+
+    profiling: run the embeddings script under cProfile.
+    no_cache: re-extract a models archive, ignoring the cache.
+    legacy: read crops from derivatives/deep_folding-2025 (overrides cortical_version).
+    use_last_checkpoint: evaluate with the native Lightning checkpoint in version_0/checkpoints/
+        instead of best_model_weights.pt, for regions that have one.
+    """
     if _is_local_path(models_path):
         _require_absolute(models_path, "models_path")
         roots = await get_roots(ctx)
@@ -324,6 +339,14 @@ async def start_embeddings(
         argv += ["--regions"] + regions
     if cortical_version:
         argv += ["--cortical_version", cortical_version]
+    if profiling:
+        argv.append("--profiling")
+    if no_cache:
+        argv.append("--no-cache")
+    if legacy:
+        argv.append("--legacy")
+    if use_last_checkpoint:
+        argv.append("--use_last_checkpoint")
 
     env = _build_env(pass_hf_token=True)
 
@@ -377,107 +400,6 @@ async def start_combine(
         args_snapshot={"embeddings_source": embeddings_source, "output_path": output_path},
     )
     return _job_result(state, "combine")
-
-
-async def start_streaming(
-    input_dir: str,
-    output_dir: str,
-    dataset: str,
-    path_to_graph: str,
-    path_sk_with_hull: str,
-    bids: bool = False,
-    n_workers: int = 0,
-    worker_timeout: int = 7200,
-    poll_interval: int = 10,
-    sk_qc_path: str | None = None,
-    models_path: str | None = None,
-    dataset_localization: str = "local",
-    datasets_root: str | None = None,
-    short_name: str = "eval",
-    embeddings_path: str = "champollion_V1",
-    dry_run: bool = False,
-    ctx: Context | None = None,
-) -> dict:
-    """Launch scan-centric streaming pipeline: one worker per scan runs stages 2-4 in parallel.
-
-    Each worker owns one ScanId and processes cortical_tiles → config → embeddings
-    sequentially for its scan, using file-presence barriers between stages.
-    Stage 5 (combine) runs once after all workers drain.
-
-    Requires embeddings_only mode (training aggregates all subjects and cannot be parallelised per-scan).
-    """
-    _require_absolute(input_dir, "input_dir")
-    _require_absolute(output_dir, "output_dir")
-    roots = await get_roots(ctx)
-    validate_within_roots(input_dir, roots, "input_dir")
-    validate_within_roots(output_dir, roots, "output_dir")
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    try:
-        loc = preflight.detect()
-    except FileNotFoundError as e:
-        raise ToolError(str(e)) from e
-
-    script = loc.scripts_dir / "run_streaming.py"
-    if not script.exists():
-        raise ToolError(f"Script not found: {script}")
-
-    argv = [
-        str(loc.python_exe),
-        str(script),
-        input_dir,
-        output_dir,
-        "--dataset",
-        dataset,
-        "--path-to-graph",
-        path_to_graph,
-        "--path-sk-with-hull",
-        path_sk_with_hull,
-        "--n-workers",
-        str(n_workers),
-        "--worker-timeout",
-        str(worker_timeout),
-        "--poll-interval",
-        str(poll_interval),
-        "--dataset-localization",
-        dataset_localization,
-        "--short-name",
-        short_name,
-        "--embeddings-path",
-        embeddings_path,
-    ]
-    if bids:
-        argv.append("--bids")
-    if sk_qc_path:
-        argv += ["--sk-qc-path", sk_qc_path]
-    if models_path:
-        argv += ["--models-path", models_path]
-    if datasets_root:
-        argv += ["--datasets-root", datasets_root]
-    if dry_run:
-        argv.append("--dry-run")
-
-    if ctx:
-        await ctx.info(
-            f"Launching streaming pipeline: {input_dir} → {output_dir} (n_workers={n_workers or 'auto'}, bids={bids})"
-        )
-
-    state = await runner.launch(
-        stage="streaming",
-        argv=argv,
-        output_dir=output_dir,
-        cwd=str(loc.pipeline_dir),
-        env=_build_env(pass_hf_token=True),
-        args_snapshot={
-            "input_dir": input_dir,
-            "output_dir": output_dir,
-            "dataset": dataset,
-            "n_workers": n_workers,
-            "bids": bids,
-            "dry_run": dry_run,
-        },
-    )
-    return _job_result(state, "streaming")
 
 
 async def start_training(

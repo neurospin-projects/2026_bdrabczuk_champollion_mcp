@@ -1,6 +1,6 @@
 ---
 name: run-pipeline
-description: Use this skill to run the Champollion sulcal embedding pipeline. Trigger when the user wants to process T1 MRI data, generate sulcal embeddings, run Morphologist, run cortical tiles, launch the champollion pipeline, or process a neuroimaging dataset through the 6-stage pipeline. Also trigger when the user asks to run specific stages (morphologist, cortical_tiles, config, training, embeddings, combine, snapshots), train a champollion encoder, or use the streaming/scan-centric parallel pipeline via the champollion MCP server.
+description: Use this skill to run the Champollion sulcal embedding pipeline. Trigger when the user wants to process T1 MRI data, generate sulcal embeddings, run Morphologist, run cortical tiles, launch the champollion pipeline, or process a neuroimaging dataset through the 6-stage pipeline. Also trigger when the user asks to run specific stages (morphologist, cortical_tiles, config, training, embeddings, combine, snapshots), or train a champollion encoder via the champollion MCP server.
 ---
 
 # Champollion Pipeline Runner
@@ -15,23 +15,9 @@ Always call `preflight_check()` first. If it reports issues, stop and help the u
 
 ## Step 1 — Execution Mode
 
-Ask two questions upfront:
+Ask upfront:
 
-**A. Stage-centric or scan-centric?**
-
-Two execution strategies are available:
-
-| Strategy | Tool | Best for |
-|----------|------|----------|
-| **Stage-centric** (default) | `start_pipeline` or individual `start_<stage>` | Large cohorts where all Morphologist graphs exist upfront |
-| **Scan-centric streaming** | `start_streaming` | Online/incremental scenarios; subjects arrive progressively |
-
-- **Stage-centric**: runs each stage across all subjects before moving to the next. Supports all 6 stages including training.
-- **Scan-centric streaming**: spawns N workers, each owning one scan (ScanId), running stages 2–4 sequentially with file-presence barriers. Stage 5 (combine) runs once after all workers drain. Training is not available — training aggregates all subjects and cannot be parallelised per-scan.
-
-If the user mentions "streaming", "scan by scan", "incremental", "subjects arriving progressively", or "one worker per scan" → use `start_streaming`.
-
-**B. Serial or parallel? (stage-centric only)**
+**A. Serial or parallel?**
 
 Only stages 1 and 2 support intra-stage parallelism. Stage 4 embeds one region at a time (GPU by default). Stages 3, 5, and 6 are always single-threaded.
 
@@ -46,7 +32,7 @@ Only stages 1 and 2 support intra-stage parallelism. Stage 4 embeds one region a
 
 If parallel: ask how many cores (for stage 2), or confirm soma-workflow is configured (for stage 1).
 
-**C. Full pipeline or individual stages? (stage-centric only)**
+**B. Full pipeline or individual stages?**
 
 - **Full pipeline** → `start_pipeline` chains all 6 stages; use `skip_stages` to resume from a checkpoint
 - **Individual stages** → `start_<stage>` tools, one at a time
@@ -67,8 +53,10 @@ Ask for the inputs and outputs of **each stage the user intends to run**. All pa
     ├── cortical_tiles-2026/
     └── champollion_V1/
         ├── configs/
-        ├── embeddings/
-        └── snapshots/
+        └── {masks}/            # mask version, default canonical_25
+            ├── region_embeddings/
+            ├── embeddings/
+            └── snapshots/
 ```
 
 Default `output_dir` per tool (each tool appends its own subfolders, so the values differ):
@@ -178,8 +166,6 @@ local directory supplied via `config_dir`.
 | `overwrite` | `True` to re-train even if the output directory already exists |
 | `swf` | Not supported: `True` is rejected with an error (training has no soma-workflow mode) |
 
-> **Note:** training operates on the whole dataset — it cannot be parallelised per-scan and is therefore not available in the streaming pipeline.
-
 ---
 
 ### Stage 4 — Embeddings
@@ -194,7 +180,7 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 **Optional:**
 | Parameter | Description |
 |-----------|-------------|
-| `output` | Output base directory; default `{parent of datasets_root}/{basename of datasets_root}embeddings/` (e.g. `/data/TESTXXembeddings/`). Use a different directory to keep a past run |
+| `output` | Output base directory; default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/` (`{masks}` = the `masks` below; e.g. `/data/TESTXX/derivatives/champollion_V1/canonical_25/region_embeddings/`). Use a different directory to keep a past run |
 | `cpu` | `True` to force CPU (disables CUDA; slower but avoids OOM) |
 | `overwrite` | `True` to recompute regions whose `full_embeddings.csv` already exists (default: they are skipped) |
 | `regions` | Restrict to these region model names (e.g. `["SCsylv_left"]`); default: every region in `models_path` |
@@ -202,6 +188,10 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `cortical_version` | Derivatives folder holding the crops (default: `cortical_tiles-2026`) |
 | `masks_version` | Mask version subfolder to download from HuggingFace; ignored for a local `models_path` |
 | `run_cka` | `True` to run the CKA coherence test after embeddings |
+| `profiling` | `True` to run under cProfile |
+| `no_cache` | `True` to force archive re-extraction / HuggingFace re-download |
+| `legacy` | `True` to read crops from `derivatives/deep_folding-2025/crops/2mm/` (overrides `cortical_version`) |
+| `use_last_checkpoint` | `True` to evaluate with the native Lightning checkpoint instead of `best_model_weights.pt` (default: best weights) |
 
 > `subjects` is still accepted but deprecated and ignored by the pipeline.
 
@@ -217,8 +207,8 @@ Copies every per-region `full_embeddings.csv` produced by stage 4 into a single 
 **Ask:**
 | Parameter | Description |
 |-----------|-------------|
-| `embeddings_source` | Stage-4 output directory (one `{region}/full_embeddings.csv` per region): the `output` given to stage 4, default `{parent of datasets_root}/{basename of datasets_root}embeddings/` |
-| `output_path` | Directory for the collected CSVs, written as `{region}_embeddings.csv` (e.g. `{output_dir}/champollion_V1/embeddings/`) |
+| `embeddings_source` | Stage-4 output directory (one `{region}/full_embeddings.csv` per region): the `output` given to stage 4, default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/` |
+| `output_path` | Directory for the collected CSVs, written as `{region}_embeddings.csv` (e.g. `{datasets_root}/derivatives/champollion_V1/{masks}/embeddings/`, where `start_pipeline` writes them) |
 
 ---
 
@@ -247,31 +237,6 @@ Then ask which snapshot types they want (at least one source directory is requir
 
 ---
 
-### Streaming Pipeline
-Scan-centric parallel runner: N workers, one per scan, each running stages 2–4 with file-presence barriers.
-
-**Ask:**
-| Parameter | Description |
-|-----------|-------------|
-| `input_dir` | Morphologist `subjects/` directory |
-| `output_dir` | Root output directory |
-| `dataset` | Short dataset name |
-| `path_to_graph` | Relative path to `.arg` graph from subject dir |
-| `path_sk_with_hull` | Relative path to skeleton directory |
-
-**Optional:**
-| Parameter | Description |
-|-----------|-------------|
-| `bids` | `True` for BIDS layout (`sub-*/ses-*/...`) |
-| `n_workers` | Number of parallel workers (0 = `os.cpu_count()`) |
-| `worker_timeout` | Seconds to wait for prerequisite files per worker (default: 7200) |
-| `dry_run` | `True` to enumerate scans without processing |
-| `models_path` | Models path or HF repo ID |
-| `datasets_root` | Dataset derivatives root |
-| `short_name` | Run tag for output folder names |
-
----
-
 ## Step 3 — Launch
 
 ### Full pipeline
@@ -296,32 +261,11 @@ start_pipeline(
 )
 ```
 
-`start_pipeline` runs stage 4 with its defaults apart from `cpu`. For any other stage-4 option (`output`, `regions`, `overwrite`, ...) run the stages individually.
+`start_pipeline` forwards a non-empty `masks` to stages 2, 3 and 4 (crops, configs and embeddings all use that mask version), and stages 5 and 6 read and write under `{datasets_root}/derivatives/champollion_V1/{masks}/` (see Output Locations). `start_pipeline` also forwards `cpu`, `overwrite`, `run_cka`, `regions`, `masks_version` and `cortical_version` to stage 4; `cortical_version` must name where the stage-2 crops actually are. For `output` or any other stage-4 option, run the stages individually.
 
 ### Individual stages
 
 Call `start_<stage>` with the parameters above. See `references/stage-params.md` for the complete parameter list.
-
-### Streaming pipeline
-
-```python
-start_streaming(
-  input_dir=<subjects_dir>,
-  output_dir=<derivatives root>,
-  dataset=<dataset name>,
-  path_to_graph=<relative path to .arg>,
-  path_sk_with_hull=<relative path to skeleton>,
-  bids=<True/False>,
-  n_workers=<N>,                      # 0 = os.cpu_count()
-  worker_timeout=7200,
-  dry_run=<True/False>,               # enumerate scans without processing
-  models_path=<models path or HF repo>,
-  datasets_root=<dataset derivatives root>,
-  short_name=<run tag>,
-)
-```
-
-For **dry-run**: set `dry_run=True` first — the job log will list all scans that would be processed without running anything.
 
 ---
 
@@ -335,16 +279,16 @@ For **dry-run**: set `dry_run=True` first — the job log will list all scans th
 
 ## Output Locations (full pipeline)
 
+`{masks}` is the `masks` value passed to `start_pipeline`, or `canonical_25` when that value is unset or empty; `{datasets_root}` is `start_pipeline`'s `datasets_root`, normally its dataset root.
+
 | Stage | Output path |
 |-------|-------------|
 | Morphologist graphs | `{output_dir}/derivatives/morphologist-*/subjects/` (`output_dir` = `start_pipeline`'s dataset root) |
-| Sulcal region crops | `{output_dir}/derivatives/cortical_tiles-*/crops/canonical_25/2mm/` (28 folders; `canonical_25` is the default `masks` version — the folder follows `masks` when it is set; `start_pipeline` never sets it) |
+| Sulcal region crops | `{output_dir}/derivatives/cortical_tiles-*/crops/canonical_25/2mm/` (28 folders; `canonical_25` is the default `masks` version — the folder follows a non-empty `masks` passed to `start_pipeline`, becoming `crops/{masks}/2mm/`) |
 | Champollion config | `{output_dir}/derivatives/champollion_V1/configs/dataset/{dataset}/` (`start_config`'s default configs root; assumes the dataset root's basename is `{dataset}`) |
-| Per-fold embeddings | `{parent of datasets_root}/{basename of datasets_root}embeddings/{region}/full_embeddings.csv` (stage-4 `output` default) |
-| Combined embeddings | `{output_dir}/derivatives/champollion_V1/embeddings/` (56 CSV files; `output_dir` = `start_pipeline`'s dataset root) |
-| Snapshots | `{output_dir}/derivatives/champollion_V1/snapshots/` (`output_dir` = `start_pipeline`'s dataset root) |
-| Streaming worker logs | `{output_dir}/logs/{scan_id}/worker.log` |
-| Streaming combined | `{output_dir}/combined_embeddings/` |
+| Per-fold embeddings | `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/{region}/full_embeddings.csv` (stage-4 `output` default) |
+| Combined embeddings | `{datasets_root}/derivatives/champollion_V1/{masks}/embeddings/` (56 CSV files) |
+| Snapshots | `{datasets_root}/derivatives/champollion_V1/{masks}/snapshots/` |
 
 Sanity checks:
 ```bash
@@ -352,5 +296,5 @@ Sanity checks:
 ls {output_dir}/derivatives/cortical_tiles-*/crops/canonical_25/2mm | wc -l
 
 # 56 combined embedding CSVs?
-ls {output_dir}/derivatives/champollion_V1/embeddings/*.csv | wc -l
+ls {datasets_root}/derivatives/champollion_V1/{masks}/embeddings/*.csv | wc -l
 ```
