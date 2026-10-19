@@ -127,6 +127,9 @@ pixi run lint-fix      # ruff check --fix
 pixi run format         # ruff format
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, checks, branch model and how to report issues.
 
 ## License
 
