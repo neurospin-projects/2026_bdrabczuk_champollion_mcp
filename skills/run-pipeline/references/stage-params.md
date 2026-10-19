@@ -86,8 +86,6 @@ instead of (or before) `start_embeddings` when custom model weights are needed.
 
 Output: `{output_dir}/` — Hydra run directory containing the trained model checkpoint and config snapshot.
 
-> **Not available in the streaming pipeline.** Training aggregates all subjects and cannot be parallelised per scan.
-
 ---
 
 ## Stage 4 — `start_embeddings`
@@ -153,40 +151,3 @@ Renders sulcal graph meshes, cortical tile masks, and UMAP scatter plots.
 At least one of `morphologist_dir`, `cortical_tiles_dir`, or `embeddings_dir` must be provided.
 
 UMAP plots need both `embeddings_dir` and `reference_data_dir`. Reference artefacts are not shipped with `champollion_pipeline` (gitignored); obtain them separately or build them with the pipeline's `pixi run generate-umap-reference` task (see the pipeline README "UMAP Visualization" section).
-
----
-
-## Streaming — `start_streaming`
-
-Scan-centric parallel runner (Strategy 2). Spawns N workers, one per `ScanId`, each running stages 2–4 sequentially with file-presence barriers. Stage 5 (combine) runs once after all workers drain. Training is not available in the streaming pipeline — training aggregates all subjects and cannot be parallelised per scan.
-
-| Parameter | Type | Required | Notes |
-|-----------|------|----------|-------|
-| `input_dir` | str | yes | Morphologist `subjects/` directory (absolute path) |
-| `output_dir` | str | yes | Root output directory for all pipeline stages |
-| `dataset` | str | yes | Short dataset name (e.g. `MY_COHORT`) |
-| `path_to_graph` | str | yes | Relative path to `.arg` graph from subject dir (supports `*` wildcards) |
-| `path_sk_with_hull` | str | yes | Relative path to skeleton directory from subject dir |
-| `bids` | bool | no | Input follows BIDS layout `sub-*/ses-*/...` (default: `False`) |
-| `n_workers` | int | no | Number of parallel workers. `0` = `os.cpu_count()` (default: `0`) |
-| `worker_timeout` | int | no | Per-worker timeout in seconds waiting for prerequisite files (default: `7200`) |
-| `poll_interval` | int | no | Seconds between filesystem polls per worker (default: `10`) |
-| `sk_qc_path` | str | no | TSV file with `participant_id` and `qc` columns to filter subjects |
-| `models_path` | str | no | Local dir, `.tar.gz` archive, or HF repo ID for model weights |
-| `dataset_localization` | str | no | `"local"` for local datasets (default: `"local"`) |
-| `datasets_root` | str | no | Absolute path to dataset derivatives root |
-| `short_name` | str | no | Run tag for output folder names (default: `"eval"`) |
-| `embeddings_path` | str | no | Relative path for combined embeddings (default: `"champollion_V1"`) |
-| `dry_run` | bool | no | Enumerate scans and log them without processing (default: `False`) |
-
-**Output locations:**
-- Worker logs: `{output_dir}/logs/{scan_id}/worker.log`
-- Cortical crops: `{output_dir}/cortical_tiles-{YEAR}/crops/2mm/`
-- Config files: `{output_dir}/champollion_V1/configs/dataset/{dataset}/`
-- Combined embeddings: `{output_dir}/combined_embeddings/`
-
-**Notes:**
-- `njobs_per_worker` is derived automatically: `max(1, cpu_count // n_workers)`
-- Resume is built-in: workers skip scans whose `full_embeddings.csv` already exists
-- Not compatible with soma-workflow; targets local multiprocessing only
-- GPU contention: with multiple workers sharing a GPU, consider `n_workers=1` for the embeddings phase or use CPU mode

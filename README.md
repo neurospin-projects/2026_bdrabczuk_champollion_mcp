@@ -27,7 +27,6 @@ Any MCP client can drive it. The repository also ships its own Claude Code subag
 | 5 | `start_combine` | Collect per-region embedding CSVs into a single output directory |
 | 6 | `start_snapshots` | Render sulcal graph meshes, cortical tile masks, and UMAP plots |
 | — | `start_pipeline` | Run stages 1–6 sequentially as one umbrella job (stages skippable) |
-| — | `start_streaming` | Scan-centric mode: one worker per scan runs stages 2–4 in parallel; combine runs once after all workers drain |
 | — | `start_training` | Train a self-supervised `champollion_V1` encoder for one region |
 
 ## Project layout
@@ -37,7 +36,7 @@ src/champollion_sulcal_mcp/
 ├── server.py            # FastMCP instance, tool registration, entry point (main())
 ├── preflight.py          # locates the champollion_pipeline repo + its scripts/submodules
 ├── job_store.py           # JobState/JobProgress models, JSON job file persistence
-├── runner.py               # subprocess launch, log streaming, progress parsing, cancel
+├── runner.py               # subprocess launch, log capture, progress parsing, cancel
 └── tools/
     ├── stages.py           # one start_<stage> tool per pipeline stage + maintenance tools
     ├── pipeline.py          # start_pipeline composite/umbrella job orchestration
@@ -46,7 +45,7 @@ src/champollion_sulcal_mcp/
 agents/
 └── champollion-pipeline.md  # Claude Code subagent definition for this MCP server
 skills/
-├── run-pipeline/             # SKILL.md guiding stage-centric vs streaming execution
+├── run-pipeline/             # SKILL.md guiding pipeline runs and their parameters
 ├── monitor/                   # SKILL.md for the job-polling loop
 └── debug/                      # SKILL.md + known error patterns for failure diagnosis
 tests/                           # pytest suite with fake_pipeline_dir / recording_runner fixtures
@@ -60,8 +59,6 @@ Registered in `server.py`:
 
 **Composite pipeline** — `start_pipeline`
 
-**Streaming** — `start_streaming`
-
 **Maintenance** — `purge_subject` (remove a subject's cortical_tiles derivatives), `prune_failed_subjects` (remove outputs for subjects that failed QC)
 
 **Job lifecycle** — `get_job_status`, `list_jobs`, `cancel_job`, `get_job_log`
@@ -72,7 +69,7 @@ Registered in `server.py`:
 
 - Python 3.11 or 3.12
 - [pixi](https://pixi.sh)
-- A checkout of the **[`champollion_pipeline`](https://github.com/neurospin/champollion_pipeline)** repository (not included here) — must contain the stage scripts under `src/` (`generate_morphologist_graphs.py`, `run_cortical_tiles.py`, `generate_champollion_config.py`, `generate_embeddings.py`, `put_together_embeddings.py`, `generate_snapshots.py`, `train_champollion.py`, `run_streaming.py`) and the `external/champollion_V1` and `external/cortical_tiles` submodules.
+- A checkout of the **[`champollion_pipeline`](https://github.com/neurospin/champollion_pipeline)** repository (not included here) — must contain the stage scripts under `src/` (`generate_morphologist_graphs.py`, `run_cortical_tiles.py`, `generate_champollion_config.py`, `generate_embeddings.py`, `put_together_embeddings.py`, `generate_snapshots.py`, `train_champollion.py`) and the `external/champollion_V1` and `external/cortical_tiles` submodules.
 
 ## Installation
 
@@ -85,7 +82,7 @@ pixi install
 | Variable | Purpose | Default |
 |---|---|---|
 | `CHAMPOLLION_PIPELINE_DIR` | Absolute path to the `champollion_pipeline` repo | Required |
-| `HF_TOKEN` | HuggingFace token | Passed through only to the `embeddings` and `streaming` stages; stripped from every other stage's subprocess environment |
+| `HF_TOKEN` | HuggingFace token | Passed through only to the `embeddings` stage; stripped from every other stage's subprocess environment |
 | `BRAINVISA` / `BRAINVISA_SHARE` | BrainVISA install location / share dir | Auto-injected from the pipeline's pixi environment if not already set in the environment |
 
 ## Running
@@ -103,7 +100,7 @@ champollion-sulcal-mcp
 Beyond the raw MCP tools, this repo ships assets for using the pipeline directly from Claude Code:
 
 - **`agents/champollion-pipeline.md`** — a subagent scoped to exactly the MCP tools it needs, with an operational playbook: always preflight first, never guess paths, default output layout, per-stage required parameters, a known-error-pattern table, and the exact CLI invocation each tool wraps.
-- **`skills/run-pipeline`** — guides choosing stage-centric vs. streaming execution and gathering the right parameters.
+- **`skills/run-pipeline`** — guides choosing between the full pipeline and individual stages, and gathering the right parameters.
 - **`skills/monitor`** — a poll-every-30-seconds monitoring loop with per-job-type progress reporting.
 - **`skills/debug`** — systematic failure diagnosis: read the full log, match against known error patterns, report root cause and fix.
 

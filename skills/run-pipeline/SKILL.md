@@ -1,6 +1,6 @@
 ---
 name: run-pipeline
-description: Use this skill to run the Champollion sulcal embedding pipeline. Trigger when the user wants to process T1 MRI data, generate sulcal embeddings, run Morphologist, run cortical tiles, launch the champollion pipeline, or process a neuroimaging dataset through the 6-stage pipeline. Also trigger when the user asks to run specific stages (morphologist, cortical_tiles, config, training, embeddings, combine, snapshots), train a champollion encoder, or use the streaming/scan-centric parallel pipeline via the champollion MCP server.
+description: Use this skill to run the Champollion sulcal embedding pipeline. Trigger when the user wants to process T1 MRI data, generate sulcal embeddings, run Morphologist, run cortical tiles, launch the champollion pipeline, or process a neuroimaging dataset through the 6-stage pipeline. Also trigger when the user asks to run specific stages (morphologist, cortical_tiles, config, training, embeddings, combine, snapshots), or train a champollion encoder via the champollion MCP server.
 ---
 
 # Champollion Pipeline Runner
@@ -15,23 +15,9 @@ Always call `preflight_check()` first. If it reports issues, stop and help the u
 
 ## Step 1 — Execution Mode
 
-Ask two questions upfront:
+Ask upfront:
 
-**A. Stage-centric or scan-centric?**
-
-Two execution strategies are available:
-
-| Strategy | Tool | Best for |
-|----------|------|----------|
-| **Stage-centric** (default) | `start_pipeline` or individual `start_<stage>` | Large cohorts where all Morphologist graphs exist upfront |
-| **Scan-centric streaming** | `start_streaming` | Online/incremental scenarios; subjects arrive progressively |
-
-- **Stage-centric**: runs each stage across all subjects before moving to the next. Supports all 6 stages including training.
-- **Scan-centric streaming**: spawns N workers, each owning one scan (ScanId), running stages 2–4 sequentially with file-presence barriers. Stage 5 (combine) runs once after all workers drain. Training is not available — training aggregates all subjects and cannot be parallelised per-scan.
-
-If the user mentions "streaming", "scan by scan", "incremental", "subjects arriving progressively", or "one worker per scan" → use `start_streaming`.
-
-**B. Serial or parallel? (stage-centric only)**
+**A. Serial or parallel?**
 
 Only stages 1 and 2 support intra-stage parallelism. Stage 4 embeds one region at a time (GPU by default). Stages 3, 5, and 6 are always single-threaded.
 
@@ -46,7 +32,7 @@ Only stages 1 and 2 support intra-stage parallelism. Stage 4 embeds one region a
 
 If parallel: ask how many cores (for stage 2), or confirm soma-workflow is configured (for stage 1).
 
-**C. Full pipeline or individual stages? (stage-centric only)**
+**B. Full pipeline or individual stages?**
 
 - **Full pipeline** → `start_pipeline` chains all 6 stages; use `skip_stages` to resume from a checkpoint
 - **Individual stages** → `start_<stage>` tools, one at a time
@@ -180,8 +166,6 @@ local directory supplied via `config_dir`.
 | `overwrite` | `True` to re-train even if the output directory already exists |
 | `swf` | Not supported: `True` is rejected with an error (training has no soma-workflow mode) |
 
-> **Note:** training operates on the whole dataset — it cannot be parallelised per-scan and is therefore not available in the streaming pipeline.
-
 ---
 
 ### Stage 4 — Embeddings
@@ -253,31 +237,6 @@ Then ask which snapshot types they want (at least one source directory is requir
 
 ---
 
-### Streaming Pipeline
-Scan-centric parallel runner: N workers, one per scan, each running stages 2–4 with file-presence barriers.
-
-**Ask:**
-| Parameter | Description |
-|-----------|-------------|
-| `input_dir` | Morphologist `subjects/` directory |
-| `output_dir` | Root output directory |
-| `dataset` | Short dataset name |
-| `path_to_graph` | Relative path to `.arg` graph from subject dir |
-| `path_sk_with_hull` | Relative path to skeleton directory |
-
-**Optional:**
-| Parameter | Description |
-|-----------|-------------|
-| `bids` | `True` for BIDS layout (`sub-*/ses-*/...`) |
-| `n_workers` | Number of parallel workers (0 = `os.cpu_count()`) |
-| `worker_timeout` | Seconds to wait for prerequisite files per worker (default: 7200) |
-| `dry_run` | `True` to enumerate scans without processing |
-| `models_path` | Models path or HF repo ID |
-| `datasets_root` | Dataset derivatives root |
-| `short_name` | Run tag for output folder names |
-
----
-
 ## Step 3 — Launch
 
 ### Full pipeline
@@ -308,27 +267,6 @@ start_pipeline(
 
 Call `start_<stage>` with the parameters above. See `references/stage-params.md` for the complete parameter list.
 
-### Streaming pipeline
-
-```python
-start_streaming(
-  input_dir=<subjects_dir>,
-  output_dir=<derivatives root>,
-  dataset=<dataset name>,
-  path_to_graph=<relative path to .arg>,
-  path_sk_with_hull=<relative path to skeleton>,
-  bids=<True/False>,
-  n_workers=<N>,                      # 0 = os.cpu_count()
-  worker_timeout=7200,
-  dry_run=<True/False>,               # enumerate scans without processing
-  models_path=<models path or HF repo>,
-  datasets_root=<dataset derivatives root>,
-  short_name=<run tag>,
-)
-```
-
-For **dry-run**: set `dry_run=True` first — the job log will list all scans that would be processed without running anything.
-
 ---
 
 ## Step 4 — After Launching
@@ -351,8 +289,6 @@ For **dry-run**: set `dry_run=True` first — the job log will list all scans th
 | Per-fold embeddings | `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/{region}/full_embeddings.csv` (stage-4 `output` default) |
 | Combined embeddings | `{datasets_root}/derivatives/champollion_V1/{masks}/embeddings/` (56 CSV files) |
 | Snapshots | `{datasets_root}/derivatives/champollion_V1/{masks}/snapshots/` |
-| Streaming worker logs | `{output_dir}/logs/{scan_id}/worker.log` |
-| Streaming combined | `{output_dir}/combined_embeddings/` |
 
 Sanity checks:
 ```bash

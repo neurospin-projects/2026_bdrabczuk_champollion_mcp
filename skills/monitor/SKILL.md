@@ -16,7 +16,7 @@ Poll and report the status of a running pipeline job.
 
 ## Progress Reporting
 
-### Pipeline job (`stage: "pipeline"` or `stage: "streaming"`)
+### Pipeline job (`stage: "pipeline"`)
 
 Report the umbrella progress:
 ```
@@ -31,14 +31,6 @@ Report fold progress when available:
 ```
 Fold {fold_current}/{fold_total} ({percent}%)
 ```
-
-### Streaming job (`stage: "streaming"`)
-
-Tail the log with `get_job_log(output_dir, job_id, tail=50)` every 60 seconds to show per-worker activity. Look for lines like:
-- `INFO complete` → worker finished its scan
-- `INFO skipping ... embeddings already exist` → resume skip
-- `ERROR timed out` → worker timed out waiting for prerequisites
-- `ERROR failed:` → worker stage failure
 
 ### All jobs
 

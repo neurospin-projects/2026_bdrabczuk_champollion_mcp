@@ -35,9 +35,6 @@ mcp.tool(stages.start_snapshots)
 # Composite pipeline
 mcp.tool(pipeline.start_pipeline)
 
-# Streaming (scan-centric parallel) pipeline
-mcp.tool(stages.start_streaming)
-
 # Maintenance / cleanup
 mcp.tool(stages.purge_subject)
 mcp.tool(stages.prune_failed_subjects)

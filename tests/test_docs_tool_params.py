@@ -52,7 +52,6 @@ STAGE_PARAMS_TOOLS = sorted(
         "start_embeddings",
         "start_combine",
         "start_snapshots",
-        "start_streaming",
     ]
 )
 
@@ -66,7 +65,6 @@ STAGE_LABELS = {
     "Stage 4": "start_embeddings",
     "Stage 5": "start_combine",
     "Stage 6": "start_snapshots",
-    "Streaming Pipeline": "start_streaming",
 }
 
 # Stage number in SKILL.md's parallelism table -> tool.
@@ -157,11 +155,8 @@ def _call_examples(text: str) -> dict[str, list[str]]:
 def _agent_stage_bullets() -> list[tuple[str, list[str]]]:
     """(tool, identifiers) per required-parameter bullet in the agent's 'Gather parameters' step."""
     text = AGENT.read_text()
-    stage_block = re.search(
-        r"^For \*\*stage-centric\*\* runs.*?\n(.*?)^For \*\*streaming\*\*", text, re.MULTILINE | re.DOTALL
-    )
-    streaming_block = re.search(r"^For \*\*streaming\*\* runs.*?\n(.*?)(?=^\s*$)", text, re.MULTILINE | re.DOTALL)
-    assert stage_block and streaming_block, "agent doc lost its per-stage / streaming parameter lists"
+    stage_block = re.search(r"^For \*\*stage-centric\*\* runs.*?\n(.*?)(?=^\s*$)", text, re.MULTILINE | re.DOTALL)
+    assert stage_block, "agent doc lost its per-stage parameter lists"
 
     bullets: list[tuple[str, list[str]]] = []
     for line in stage_block.group(1).splitlines():
@@ -171,9 +166,6 @@ def _agent_stage_bullets() -> list[tuple[str, list[str]]]:
         tool = next((t for label, t in STAGE_LABELS.items() if m.group(1).startswith(label)), None)
         assert tool, f"agent bullet with unknown stage label: {line!r}"
         bullets.append((tool, OWN_IDENTIFIER.findall(m.group(2))))
-    for line in streaming_block.group(1).splitlines():
-        if line.startswith("- "):
-            bullets.append(("start_streaming", OWN_IDENTIFIER.findall(line)))
     return bullets
 
 
@@ -227,7 +219,7 @@ def test_skill_parallelism_table_params_exist() -> None:
     assert unknown == {}, f"parallelism table names parameters the tools do not accept: {unknown}"
 
 
-@pytest.mark.parametrize("tool", ["start_pipeline", "start_streaming"])
+@pytest.mark.parametrize("tool", ["start_pipeline"])
 def test_skill_call_example_params_exist(tool: str) -> None:
     """Each keyword in SKILL.md's start_*(...) call example is a parameter of that tool."""
     examples = _call_examples(SKILL.read_text())

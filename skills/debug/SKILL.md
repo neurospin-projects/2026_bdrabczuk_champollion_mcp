@@ -11,11 +11,6 @@ Systematic diagnosis of pipeline failures using job logs and known error pattern
 
 Call `get_job_log(output_dir, job_id)` and read the **full** output. Do not truncate.
 
-For streaming jobs, also read the per-worker logs:
-```bash
-cat {output_dir}/logs/{scan_id}/worker.log
-```
-
 ## Step 2 — Identify the Error
 
 Search for known patterns in `references/error-patterns.md`. Match the error message to a root cause and fix.
