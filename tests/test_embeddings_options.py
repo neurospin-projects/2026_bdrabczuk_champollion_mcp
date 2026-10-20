@@ -1,4 +1,9 @@
-"""Stage-4 options on start_embeddings and start_pipeline (TASK-050, REQ-MCP-EMBOPT-01..07).
+"""Stage-4 options on start_embeddings and start_pipeline (TASK-050, REQ-MCP-EMBOPT-01..03, -05..07).
+
+REQ-MCP-EMBOPT-04 (use_last_checkpoint) is superseded by REQ-MCPEMBOPT-BDRABCZUK-53C7DE141356
+and REQ-MCPEMBOPT-BDRABCZUK-09CD41362839: champollion_pipeline removed --use_last_checkpoint and
+evaluates the epoch given by --checkpoint-epoch (TASK-EPOCH80, REQ-MCPEMBOPT-BDRABCZUK-3F8CD6EEBA46,
+-3221B3A11FE2, -E29F84095D7A).
 
 runner.launch is replaced by the `launches` recorder, so no pipeline script runs.
 The parser check (REQ-MCP-EMBOPT-05) parses the recorded argv with the real
@@ -15,8 +20,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from champollion_sulcal_mcp import job_store
+from champollion_sulcal_mcp.server import mcp
 from champollion_sulcal_mcp.tools import pipeline, stages
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
@@ -39,7 +47,7 @@ def _contains_run(argv: list[str], tokens: list[str]) -> bool:
     return any(argv[i : i + n] == tokens for i in range(len(argv) - n + 1))
 
 
-# --- REQ-MCP-EMBOPT-01..04: new boolean flags on start_embeddings ---
+# --- REQ-MCP-EMBOPT-01..03: new boolean flags on start_embeddings ---
 
 
 @pytest.mark.unit
@@ -50,14 +58,70 @@ class TestEmbeddingsNewFlags:
             ("profiling", "--profiling"),  # REQ-MCP-EMBOPT-01
             ("no_cache", "--no-cache"),  # REQ-MCP-EMBOPT-02
             ("legacy", "--legacy"),  # REQ-MCP-EMBOPT-03
-            ("use_last_checkpoint", "--use_last_checkpoint"),  # REQ-MCP-EMBOPT-04
         ],
-        ids=["profiling", "no_cache", "legacy", "use_last_checkpoint"],
+        ids=["profiling", "no_cache", "legacy"],
     )
     async def test_appends_flag(self, pipeline_dir, tmp_path, launches, name, flag):
-        """REQ-MCP-EMBOPT-01..04: `<name>=True` appends its generate_embeddings.py flag."""
+        """REQ-MCP-EMBOPT-01..03: `<name>=True` appends its generate_embeddings.py flag."""
         await stages.start_embeddings(**_embeddings_kwargs(tmp_path), **{name: True})
         assert flag in launches[0]["argv"][2:], launches[0]["argv"]
+
+
+# --- TASK-EPOCH80: use_last_checkpoint removed (the pipeline no longer accepts the flag) ---
+
+
+@pytest.mark.unit
+class TestEmbeddingsNoLastCheckpoint:
+    async def test_schema_omits_use_last_checkpoint(self):
+        """REQ-MCPEMBOPT-BDRABCZUK-53C7DE141356: the tool input schema has no use_last_checkpoint property."""
+        tool = await mcp.get_tool("start_embeddings")
+        assert "use_last_checkpoint" not in tool.parameters["properties"]
+
+    async def test_call_with_use_last_checkpoint_errors_without_launch(self, pipeline_dir, tmp_path, launches):
+        """REQ-MCPEMBOPT-BDRABCZUK-09CD41362839: use_last_checkpoint is a validation error; nothing launches."""
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="use_last_checkpoint"):
+                await client.call_tool(
+                    "start_embeddings", {**_embeddings_kwargs(tmp_path), "use_last_checkpoint": True}
+                )
+        assert launches == []
+
+
+# --- TASK-EPOCH80: checkpoint_epoch forwarded as --checkpoint-epoch ---
+
+
+@pytest.mark.unit
+class TestEmbeddingsCheckpointEpoch:
+    @pytest.mark.parametrize("epoch", [0, 80, 12], ids=["epoch_0", "epoch_80", "epoch_12"])
+    async def test_forwards_checkpoint_epoch(self, pipeline_dir, tmp_path, launches, epoch):
+        """REQ-MCPEMBOPT-BDRABCZUK-3F8CD6EEBA46: checkpoint_epoch=N puts `--checkpoint-epoch N` in the argv."""
+        async with Client(mcp) as client:
+            await client.call_tool("start_embeddings", {**_embeddings_kwargs(tmp_path), "checkpoint_epoch": epoch})
+        assert len(launches) == 1
+        assert _contains_run(launches[0]["argv"][2:], ["--checkpoint-epoch", str(epoch)]), launches[0]["argv"]
+
+    @pytest.mark.parametrize(
+        "extra",
+        [{}, {"checkpoint_epoch": None}],
+        ids=["omitted", "null"],
+    )
+    async def test_no_checkpoint_epoch_omits_flag(self, pipeline_dir, tmp_path, launches, extra):
+        """REQ-MCPEMBOPT-BDRABCZUK-3221B3A11FE2: no checkpoint_epoch value leaves --checkpoint-epoch out."""
+        async with Client(mcp) as client:
+            await client.call_tool("start_embeddings", {**_embeddings_kwargs(tmp_path), **extra})
+        assert len(launches) == 1
+        assert "--checkpoint-epoch" not in launches[0]["argv"], launches[0]["argv"]
+
+    async def test_negative_checkpoint_epoch_errors_without_launch(self, pipeline_dir, tmp_path, launches):
+        """REQ-MCPEMBOPT-BDRABCZUK-E29F84095D7A: a negative checkpoint_epoch is a validation error; nothing launches.
+
+        The error must reject the value, not the argument name (an unknown argument also fails validation).
+        """
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="checkpoint_epoch") as excinfo:
+                await client.call_tool("start_embeddings", {**_embeddings_kwargs(tmp_path), "checkpoint_epoch": -1})
+        assert "unexpected_keyword_argument" not in str(excinfo.value), str(excinfo.value)
+        assert launches == []
 
 
 # --- REQ-MCP-EMBOPT-05: argv accepted by the real pipeline parser ---
@@ -76,7 +140,7 @@ _ALL_OPTIONS: dict = {
     "profiling": True,
     "no_cache": True,
     "legacy": True,
-    "use_last_checkpoint": True,
+    "checkpoint_epoch": 12,
 }
 
 _PARSE_SNIPPET = """

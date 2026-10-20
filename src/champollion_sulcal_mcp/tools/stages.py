@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Annotated
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from .. import preflight, runner
 from ..roots import get_roots, validate_subject_subpath, validate_within_roots
@@ -290,7 +292,7 @@ async def start_embeddings(
     profiling: bool = False,
     no_cache: bool = False,
     legacy: bool = False,
-    use_last_checkpoint: bool = False,
+    checkpoint_epoch: Annotated[int, Field(ge=0)] | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 4: compute sulcal embeddings across all 56 model folds (28 regions × 2 hemispheres).
@@ -298,8 +300,8 @@ async def start_embeddings(
     profiling: run the embeddings script under cProfile.
     no_cache: re-extract a models archive, ignoring the cache.
     legacy: read crops from derivatives/deep_folding-2025 (overrides cortical_version).
-    use_last_checkpoint: evaluate with the native Lightning checkpoint in version_0/checkpoints/
-        instead of best_model_weights.pt, for regions that have one.
+    checkpoint_epoch: training epoch N (0-based) of the Lightning checkpoint epoch=N-step=*.ckpt to
+        evaluate each region with; omitted, the pipeline default (80) applies.
     """
     if _is_local_path(models_path):
         _require_absolute(models_path, "models_path")
@@ -345,8 +347,8 @@ async def start_embeddings(
         argv.append("--no-cache")
     if legacy:
         argv.append("--legacy")
-    if use_last_checkpoint:
-        argv.append("--use_last_checkpoint")
+    if checkpoint_epoch is not None:
+        argv += ["--checkpoint-epoch", str(checkpoint_epoch)]
 
     env = _build_env(pass_hf_token=True)
 

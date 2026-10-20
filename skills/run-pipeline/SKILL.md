@@ -191,7 +191,7 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `profiling` | `True` to run under cProfile |
 | `no_cache` | `True` to force archive re-extraction / HuggingFace re-download |
 | `legacy` | `True` to read crops from `derivatives/deep_folding-2025/crops/2mm/` (overrides `cortical_version`) |
-| `use_last_checkpoint` | `True` to evaluate with the native Lightning checkpoint instead of `best_model_weights.pt` (default: best weights) |
+| `checkpoint_epoch` | Training epoch N (0-based, must be >= 0) of the Lightning checkpoint evaluated for each region (pipeline default: 80) |
 
 > `subjects` is still accepted but deprecated and ignored by the pipeline.
 

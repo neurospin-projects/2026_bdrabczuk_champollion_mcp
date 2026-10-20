@@ -108,7 +108,7 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `profiling` | bool | no | Run the embeddings script under cProfile (`--profiling`) |
 | `no_cache` | bool | no | Force archive re-extraction / HuggingFace re-download (`--no-cache`) |
 | `legacy` | bool | no | Read crops from `derivatives/deep_folding-2025/crops/2mm/` (`--legacy`; overrides `cortical_version`) |
-| `use_last_checkpoint` | bool | no | Evaluate with the native Lightning checkpoint in `version_0/checkpoints/` instead of `best_model_weights.pt`, for regions that have one (`--use_last_checkpoint`) |
+| `checkpoint_epoch` | int | no | Training epoch N (0-based, must be >= 0) of the Lightning checkpoint `epoch=N-step=*.ckpt` evaluated for each region (`--checkpoint-epoch`; pipeline default 80) |
 
 **HF_TOKEN**: Set in env before starting the MCP server if downloading from HuggingFace.
 
