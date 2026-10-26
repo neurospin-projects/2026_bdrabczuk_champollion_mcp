@@ -261,7 +261,7 @@ start_pipeline(
 )
 ```
 
-`start_pipeline` forwards a non-empty `masks` to stages 2, 3 and 4 (crops, configs and embeddings all use that mask version), and stages 5 and 6 read and write under `{datasets_root}/derivatives/champollion_V1/{masks}/` (see Output Locations). `start_pipeline` also forwards `cpu`, `overwrite`, `run_cka`, `regions`, `masks_version` and `cortical_version` to stage 4; `cortical_version` must name where the stage-2 crops actually are. For `output` or any other stage-4 option, run the stages individually.
+`start_pipeline` forwards a non-empty `masks` to stages 2, 3 and 4 (crops, configs and embeddings all use that mask version), and stages 5 and 6 read and write under `{datasets_root}/derivatives/champollion_V1/{masks}/` (see Output Locations). `start_pipeline` also forwards `cpu`, `overwrite`, `run_cka`, `regions`, `masks_version` and `cortical_version` to stage 4; `cortical_version` must name where the stage-2 crops actually are. For `output` or any other stage-4 option, run the stages individually. Every `start_*` tool and `start_pipeline` take `log` (default true): each launched stage gets a bare `--log` and writes its run log to its default `.log` folder; `start_pipeline` forwards `log` to every stage.
 
 ### Individual stages
 

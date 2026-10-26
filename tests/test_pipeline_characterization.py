@@ -253,4 +253,5 @@ class TestLaunchStageWiring:
         assert captured == {
             "crop_path": "/abs/data/DEMO01/derivatives/cortical_tiles/crops/2mm",
             "dataset": "DEMO01",
+            "log": True,
         }
