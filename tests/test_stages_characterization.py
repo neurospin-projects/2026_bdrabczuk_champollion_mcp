@@ -106,9 +106,9 @@ class TestEmbeddingsArgv:
         assert _contains_run(launches[0]["argv"], expected), launches[0]["argv"]
 
     async def test_omits_optional_flags_by_default(self, pipeline_dir, tmp_path, launches):
-        """REQ-MCP-COV-03: with no optional arguments, only the two positionals follow the script."""
+        """REQ-MCP-COV-03: with no optional arguments, the two positionals and the default --log follow the script."""
         await stages.start_embeddings(**_tool_kwargs("start_embeddings", tmp_path))
-        assert len(_script_args(launches[0]["argv"])) == 2
+        assert _script_args(launches[0]["argv"])[2:] == ["--log"]
 
 
 # --- REQ-MCP-COV-04 / -05 / -06: HF_TOKEN handling ---
@@ -181,7 +181,7 @@ class TestCombineArgv:
         await stages.start_combine(**kwargs)
         argv = launches[0]["argv"]
         assert Path(argv[1]).name == "put_together_embeddings.py"
-        assert _script_args(argv) == [kwargs["embeddings_source"], "--output_path", kwargs["output_path"]]
+        assert _script_args(argv) == [kwargs["embeddings_source"], "--output_path", kwargs["output_path"], "--log"]
 
 
 # --- REQ-MCP-COV-13 / -14: purge_subject and prune_failed_subjects commands ---
@@ -193,7 +193,7 @@ class TestPurgeSubjectArgv:
         """REQ-MCP-COV-13: `<derivatives> --subject <subject>` plus `--dry-run` only when dry_run."""
         kwargs = _tool_kwargs("purge_subject", tmp_path)
         await stages.purge_subject(**kwargs, dry_run=dry_run)
-        expected = [kwargs["derivatives"], "--subject", "sub-01"] + (["--dry-run"] if dry_run else [])
+        expected = [kwargs["derivatives"], "--subject", "sub-01"] + (["--dry-run"] if dry_run else []) + ["--log"]
         assert _script_args(launches[0]["argv"]) == expected
 
 
@@ -203,7 +203,7 @@ class TestPruneFailedSubjectsArgv:
         """REQ-MCP-COV-14: `<output> --qc <qc>` plus `--dry-run` only when dry_run."""
         kwargs = _tool_kwargs("prune_failed_subjects", tmp_path)
         await stages.prune_failed_subjects(**kwargs, dry_run=dry_run)
-        expected = [kwargs["output"], "--qc", kwargs["qc"]] + (["--dry-run"] if dry_run else [])
+        expected = [kwargs["output"], "--qc", kwargs["qc"]] + (["--dry-run"] if dry_run else []) + ["--log"]
         assert _script_args(launches[0]["argv"]) == expected
 
 

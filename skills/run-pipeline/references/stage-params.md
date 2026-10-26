@@ -14,6 +14,7 @@ Calls `morphologist-cli` to generate sulcal graphs (`.arg` files) from T1 NIfTI 
 | `output_dir` | str | yes | The dataset root (e.g. `./data/{dataset}/`); `morphologist-cli` writes to `derivatives/morphologist-{version}/subjects/` under it |
 | `parallel` | bool | no | Enable soma-workflow parallel scheduling (Neurospin cluster) |
 | `enable_sulcal_recognition` | bool | no | Run sulcal labeling (slower, not required for embeddings) |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 Output: `{output_dir}/derivatives/morphologist-{version}/subjects/{subject}/`
 
@@ -35,6 +36,7 @@ Extracts 28 standardized sulcal region crops from Morphologist's graphs.
 | `regions` | list[str] | no | Restrict to a subset of the 28 sulcal regions (space-separated in CLI; list here) |
 | `labelling_session` | str | no | Morphologist labelling session whose labelled graphs locate the ventricle for whole-brain removal (default: `deepcnn_session_auto`) |
 | `overwrite` | bool | no | Re-generate crops even if they already exist for this mask version |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 Output: `{output_dir}/cortical_tiles-{YEAR}/crops/{masks}/2mm/` — 28 region folders (`{masks}` = the `masks` parameter, default `canonical_25`).
 
@@ -60,6 +62,7 @@ Generates Champollion dataset YAML configuration files (`reference.yaml`, `local
 | `external_config` | str | no | Absolute path (directory or file) where the `dataset_localization` YAML is written; must be inside a declared MCP root when roots are declared. Default: `{configs root}/dataset_localization/`. Use for read-only containers |
 | `external_crops` | bool | no | Set when crops are outside the pipeline dir |
 | `masks` | str | no | Mask version tag forwarded as `--masks` (e.g. `canonical_corrected_26_1`); must match the stage-2 masks. Default: the script's `canonical_25` |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 Output: `{configs root}/dataset/{dataset}/` (`reference.yaml` + one YAML per region) and `{configs root}/dataset_localization/` (unless `external_config` is set). `start_embeddings` (stage 4) does not consume these files (each model folder carries its own `.hydra/config.yaml`); they feed `start_training` via `config_dir`.
 
@@ -83,6 +86,7 @@ instead of (or before) `start_embeddings` when custom model weights are needed.
 | `cpu` | bool | no | Force CPU (disable CUDA) |
 | `overwrite` | bool | no | Re-train even if `output_dir` already exists |
 | `swf` | bool | no | Not supported — `True` raises a ToolError before anything is created or launched (training has no soma-workflow mode) |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 Output: `{output_dir}/` — Hydra run directory containing the trained model checkpoint and config snapshot.
 
@@ -109,6 +113,7 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `no_cache` | bool | no | Force archive re-extraction / HuggingFace re-download (`--no-cache`) |
 | `legacy` | bool | no | Read crops from `derivatives/deep_folding-2025/crops/2mm/` (`--legacy`; overrides `cortical_version`) |
 | `checkpoint_epoch` | int | no | Training epoch N (0-based, must be >= 0) of the Lightning checkpoint `epoch=N-step=*.ckpt` evaluated for each region (`--checkpoint-epoch`; pipeline default 80) |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 **HF_TOKEN**: Set in env before starting the MCP server if downloading from HuggingFace.
 
@@ -124,6 +129,7 @@ Copies every per-region `full_embeddings.csv` produced by stage 4 into a single 
 |-----------|------|----------|-------|
 | `embeddings_source` | str | yes | Absolute path to the stage-4 output directory (one `{region}/full_embeddings.csv` per region): the `output` given to `start_embeddings`, default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/` |
 | `output_path` | str | yes | Directory for the collected CSVs (created if missing) |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 Output: `{output_path}/{region}_embeddings.csv` — one file per region folder of `embeddings_source` that holds a `full_embeddings.csv`; regions without one are skipped with a `[skip]` log line. Zero files copied is logged as a warning, not a failure.
 
@@ -147,6 +153,7 @@ Renders sulcal graph meshes, cortical tile masks, and UMAP scatter plots.
 | `umap_region` | str | no | Restrict UMAP plot to a specific sulcal region (e.g. `SPoC_left`) |
 | `champollion_data_root` | str | no | Override path to the Champollion data directory (used to resolve tile masks) |
 | `reference_data_dir` | str | no | Dir of pre-trained UMAP artefacts (`umap_{region}_{hemi}.pkl` / `_coords.npy`). Not shipped, no default; without it no UMAP plots are produced |
+| `log` | bool | no | Pass a bare `--log` so the stage writes its run log to its default `.log` folder (default: true) |
 
 At least one of `morphologist_dir`, `cortical_tiles_dir`, or `embeddings_dir` must be provided.
 

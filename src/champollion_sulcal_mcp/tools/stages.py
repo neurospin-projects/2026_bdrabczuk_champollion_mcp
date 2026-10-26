@@ -17,6 +17,11 @@ def _require_absolute(path: str, name: str) -> None:
         raise ToolError(f"{name} must be an absolute path, got: {path!r}")
 
 
+def _with_log(argv: list[str], log: bool) -> list[str]:
+    """Append a bare --log so the stage writes its run log to its default .log folder; it must stay last (nargs="?")."""
+    return [*argv, "--log"] if log else argv
+
+
 def _job_result(state, stage: str) -> dict:
     return {
         "job_id": state.job_id,
@@ -89,6 +94,7 @@ async def start_morphologist(
     output_dir: str,
     parallel: bool = False,
     enable_sulcal_recognition: bool = False,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 1: generate sulcal graphs with Morphologist from raw T1 MRI data."""
@@ -119,7 +125,7 @@ async def start_morphologist(
 
     state = await runner.launch(
         stage="morphologist",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output_dir,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -139,6 +145,7 @@ async def start_cortical_tiles(
     regions: list[str] | None = None,
     labelling_session: str | None = None,
     overwrite: bool = False,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 2: extract 28 sulcal region crops with cortical_tiles."""
@@ -188,7 +195,7 @@ async def start_cortical_tiles(
 
     state = await runner.launch(
         stage="cortical_tiles",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output_dir,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -210,6 +217,7 @@ async def start_config(
     external_config: str | None = None,
     external_crops: bool = False,
     masks: str | None = None,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 3: generate Champollion dataset YAML configuration files.
@@ -264,7 +272,7 @@ async def start_config(
 
     state = await runner.launch(
         stage="config",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output_dir,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -293,6 +301,7 @@ async def start_embeddings(
     no_cache: bool = False,
     legacy: bool = False,
     checkpoint_epoch: Annotated[int, Field(ge=0)] | None = None,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 4: compute sulcal embeddings across all 56 model folds (28 regions × 2 hemispheres).
@@ -357,7 +366,7 @@ async def start_embeddings(
 
     state = await runner.launch(
         stage="embeddings",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=datasets_root,
         cwd=str(loc.pipeline_dir),
         env=env,
@@ -369,6 +378,7 @@ async def start_embeddings(
 async def start_combine(
     embeddings_source: str,
     output_path: str,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 5: collect all per-region embedding CSVs into a single output directory."""
@@ -395,7 +405,7 @@ async def start_combine(
 
     state = await runner.launch(
         stage="combine",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output_path,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -414,6 +424,7 @@ async def start_training(
     cpu: bool = False,
     overwrite: bool = False,
     swf: bool = False,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch encoder training: train a champollion_V1 self-supervised encoder for one sulcal region.
@@ -480,7 +491,7 @@ async def start_training(
 
     state = await runner.launch(
         stage="training",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=resolved_output_dir,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -493,6 +504,7 @@ async def purge_subject(
     derivatives: str,
     subject: str,
     dry_run: bool = False,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Remove all cortical_tiles derivatives for a single subject.
@@ -525,7 +537,7 @@ async def purge_subject(
 
     state = await runner.launch(
         stage="purge_subject",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=derivatives,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -538,6 +550,7 @@ async def prune_failed_subjects(
     output: str,
     qc: str,
     dry_run: bool = False,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Remove cortical_tiles outputs for all subjects that failed QC.
@@ -572,7 +585,7 @@ async def prune_failed_subjects(
 
     state = await runner.launch(
         stage="prune_failed_subjects",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),
@@ -594,6 +607,7 @@ async def start_snapshots(
     umap_region: str | None = None,
     champollion_data_root: str | None = None,
     reference_data_dir: str | None = None,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch Stage 6: render sulcal graph meshes, cortical tile masks, and UMAP scatter plots.
@@ -644,7 +658,7 @@ async def start_snapshots(
 
     state = await runner.launch(
         stage="snapshots",
-        argv=argv,
+        argv=_with_log(argv, log),
         output_dir=output_dir,
         cwd=str(loc.pipeline_dir),
         env=_build_env(),

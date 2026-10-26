@@ -65,6 +65,7 @@ async def start_pipeline(
     masks: str | None = None,
     masks_version: str | None = None,
     cortical_version: str | None = None,
+    log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
     """Launch the full Champollion pipeline (all 6 stages sequentially). Returns a pipeline job_id immediately.
@@ -125,6 +126,7 @@ async def start_pipeline(
             masks=masks,
             masks_version=masks_version,
             cortical_version=cortical_version,
+            log=log,
         )
     )
     task.add_done_callback(_handle_task_exception)
@@ -253,11 +255,13 @@ async def _execute_pipeline(
 
 
 async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> dict:
+    log = kwargs.get("log", True)
     if stage_name == "morphologist":
         return await stages.start_morphologist(
             input_dir=kwargs["input_dir"],
             output_dir=umbrella_output_dir,
             parallel=kwargs.get("parallel", False),
+            log=log,
         )
     elif stage_name == "cortical_tiles":
         return await stages.start_cortical_tiles(
@@ -269,6 +273,7 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             njobs=kwargs.get("njobs"),
             labelling_session=kwargs.get("labelling_session"),
             masks=kwargs.get("masks"),
+            log=log,
         )
     elif stage_name == "config":
         masks = kwargs.get("masks")
@@ -276,6 +281,7 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             crop_path=kwargs["crop_path"],
             dataset=kwargs["dataset"],
             **({"masks": masks} if masks else {}),
+            log=log,
         )
     elif stage_name == "embeddings":
         return await stages.start_embeddings(
@@ -288,12 +294,14 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             masks=kwargs.get("masks"),
             masks_version=kwargs.get("masks_version"),
             cortical_version=kwargs.get("cortical_version"),
+            log=log,
         )
     elif stage_name == "combine":
         version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
         return await stages.start_combine(
             embeddings_source=str(version_dir / REGION_EMBEDDINGS_SUBDIR),
             output_path=str(version_dir / EMBEDDINGS_SUBDIR),
+            log=log,
         )
     elif stage_name == "snapshots":
         version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
@@ -302,6 +310,7 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             morphologist_dir=kwargs.get("input_dir"),
             embeddings_dir=str(version_dir / EMBEDDINGS_SUBDIR),
             reference_data_dir=kwargs.get("reference_data_dir"),
+            log=log,
         )
     else:
         raise ToolError(f"Unknown stage: {stage_name!r}")

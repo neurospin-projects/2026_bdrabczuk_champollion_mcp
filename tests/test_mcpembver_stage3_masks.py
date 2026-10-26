@@ -126,4 +126,4 @@ async def test_start_pipeline_forwards_supplied_masks_to_start_config(tmp_path, 
 async def test_start_pipeline_omits_masks_from_start_config_when_unset(tmp_path, monkeypatch, masks):
     """With masks unset or empty, start_config still receives crop_path and dataset only."""
     call = await _config_call_via_pipeline(tmp_path, monkeypatch, masks=masks)
-    assert set(call) == {"crop_path", "dataset"}, f"start_config received {call}"
+    assert set(call) == {"crop_path", "dataset", "log"}, f"start_config received {call}"
