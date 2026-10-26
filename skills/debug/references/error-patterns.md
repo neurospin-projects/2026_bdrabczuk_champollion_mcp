@@ -27,6 +27,8 @@ aims-config: not found
 ```
 **Fix:** The `BRAINVISA_SHARE` env var is missing or `PATH` doesn't include the BrainVISA bin. `preflight_check()` should flag this. The MCP server injects `BRAINVISA_SHARE` automatically from the pixi env — if it's missing, the pixi install may be incomplete.
 
+The MCP server sets `CONDA_PREFIX` to the pipeline pixi environment directory in stage subprocess environments. The env's `Xvfb` wrapper finds its keyboard data under `${CONDA_PREFIX}/share/X11/xkb`; with a wrong value, headless Morphologist loops on "XKB: Failed to compile keymap" and never writes output.
+
 ---
 
 ## Stage 1 — Morphologist

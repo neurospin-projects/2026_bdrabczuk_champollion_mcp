@@ -12,7 +12,7 @@ Any MCP client can drive it. The repository also ships its own Claude Code subag
 
 1. A caller (an MCP client) invokes a tool such as `start_cortical_tiles`.
 2. The tool validates its arguments (paths must be absolute), resolves the pipeline's script location via `preflight.detect()`, and builds an `argv` matching that script's real CLI.
-3. `runner.launch()` spawns the script as a subprocess with an environment built by `_build_env()` (selectively passes `HF_TOKEN`, injects `BRAINVISA_SHARE`, prepends BrainVISA/pixi bins to `PATH`), and returns immediately with a `job_id`.
+3. `runner.launch()` spawns the script as a subprocess with an environment built by `_build_env()` (selectively passes `HF_TOKEN`, injects `BRAINVISA_SHARE`, sets `CONDA_PREFIX` to the pipeline pixi env (`<pipeline>/.pixi/envs/default`) when it exists, prepends BrainVISA/pixi bins to `PATH`), and returns immediately with a `job_id`.
 4. The subprocess's combined stdout/stderr is streamed line-by-line into a log file; progress lines matching `fold N/M` update the job's progress.
 5. The caller polls `get_job_status(output_dir, job_id)` (and can tail `get_job_log`) until the job is `succeeded`, `failed`, or `cancelled`.
 

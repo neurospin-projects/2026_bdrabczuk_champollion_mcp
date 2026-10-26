@@ -44,12 +44,19 @@ def _build_env(*, pass_hf_token: bool = False) -> dict:
 
     try:
         pipeline_dir = preflight.resolve_pipeline_dir()
-        pixi_bin = pipeline_dir / ".pixi" / "envs" / "default" / "bin"
+        pixi_env = pipeline_dir / ".pixi" / "envs" / "default"
+        pixi_bin = pixi_env / "bin"
+
+        # Point CONDA_PREFIX at the pipeline env, replacing any inherited value (under
+        # `pixi run` it names the MCP's own env). The env's Xvfb wrapper reads
+        # ${CONDA_PREFIX}/share/X11/xkb; a wrong value makes headless Morphologist hang.
+        if pixi_env.is_dir():
+            env["CONDA_PREFIX"] = str(pixi_env)
 
         # Inject BRAINVISA_SHARE when not set — required by AIMS/Anatomist to locate
         # nomenclature files and read .arg sulcal graphs correctly.
         if not env.get("BRAINVISA_SHARE"):
-            brainvisa_share = pipeline_dir / ".pixi" / "envs" / "default" / "share"
+            brainvisa_share = pixi_env / "share"
             if brainvisa_share.is_dir():
                 env["BRAINVISA_SHARE"] = str(brainvisa_share)
 
