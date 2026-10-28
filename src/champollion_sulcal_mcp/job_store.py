@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import logging
 import os
 import re
@@ -251,20 +252,54 @@ async def update_job_with(output_dir: str, job_id: str, decide: Callable[[JobSta
     """
     lock = await _get_lock(job_id)
     async with lock:
-        state = read_job(output_dir, job_id)
-        fields = decide(state)
-        if not fields:
-            return state
-        fields = dict(fields)
-        # Handle nested progress updates
-        if "progress" in fields and isinstance(fields["progress"], dict):
-            current = state.progress.model_dump()
-            current.update(fields.pop("progress"))
-            fields["progress"] = JobProgress(**current)
-        updated = state.model_copy(update=fields)
-        write_job(updated)
-        return updated
+        with _process_lock(output_dir, job_id):
+            state = read_job(output_dir, job_id)
+            fields = decide(state)
+            if not fields:
+                return state
+            fields = dict(fields)
+            # Handle nested progress updates
+            if "progress" in fields and isinstance(fields["progress"], dict):
+                current = state.progress.model_dump()
+                current.update(fields.pop("progress"))
+                fields["progress"] = JobProgress(**current)
+            updated = state.model_copy(update=fields)
+            write_job(updated)
+            return updated
+
+
+@contextlib.contextmanager
+def _process_lock(output_dir: str, job_id: str):
+    """Exclusive flock on ``<job_id>.lock``, shared by every process writing the record (never deleted)."""
+    path = jobs_dir(output_dir) / f"{validate_job_id(job_id)}.lock"
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 async def update_job(output_dir: str, job_id: str, **fields) -> JobState:
     return await update_job_with(output_dir, job_id, lambda _state: fields)
+
+
+def find_job_by_wrapper(output_dir: str, stage: str, wrapper_pid: int) -> str | None:
+    """Id of the one running ``stage`` job under ``output_dir`` whose recorded process is ``wrapper_pid``.
+
+    The record must hold that pid and its current start time (so a reused pid never matches). Unreadable
+    records are skipped. None when no record or more than one matches.
+    """
+    start = process_start_time(wrapper_pid)
+    if start is None:
+        return None
+    found = []
+    for path in sorted(jobs_dir(output_dir).glob("*.json")):
+        try:
+            state = JobState.model_validate_json(path.read_text())
+        except (OSError, ValueError):
+            continue
+        ours = state.pid == wrapper_pid and state.pid_start_time == start
+        if ours and state.stage == stage and state.status == "running":
+            found.append(state.job_id)
+    return found[0] if len(found) == 1 else None

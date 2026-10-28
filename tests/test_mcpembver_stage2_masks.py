@@ -112,6 +112,7 @@ async def test_launch_stage_cortical_tiles_forwards_masks(recording_cortical_til
     assert recording_cortical_tiles[0].get("masks") == MASKS, recording_cortical_tiles[0]
 
 
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_cortical_tiles_argv_carries_masks(pipeline_dir, tmp_path, launches, monkeypatch):
     """start_pipeline(masks=<value>) launches run_cortical_tiles.py with `--masks <value>`."""
     argv = await _cortical_tiles_argv_via_pipeline(tmp_path, launches, monkeypatch, masks=MASKS)
@@ -120,6 +121,7 @@ async def test_start_pipeline_cortical_tiles_argv_carries_masks(pipeline_dir, tm
 
 
 @pytest.mark.parametrize("masks", [None, ""], ids=["unset", "empty"])
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_cortical_tiles_argv_omits_masks_when_unset(
     pipeline_dir, tmp_path, launches, monkeypatch, masks
 ):

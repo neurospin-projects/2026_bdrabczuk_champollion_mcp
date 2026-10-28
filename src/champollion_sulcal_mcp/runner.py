@@ -42,13 +42,22 @@ REFUSED_GONE = "recorded process gone, not signalled"
 REFUSED_REUSED = "recorded pid reused, not signalled"
 REFUSED_LEFT_GROUP = "recorded pid left its process group, not signalled"
 # Directory holding the champollion_sulcal_mcp package this server runs; the wrapper imports the same tree.
-_PKG_ROOT = str(Path(__file__).resolve().parent.parent)
+PKG_ROOT = str(Path(__file__).resolve().parent.parent)
 _WRAPPER_BOOT = (
     "import sys; sys.path.insert(0, sys.argv[1]); "
     "from champollion_sulcal_mcp.job_wrapper import main; sys.exit(main(sys.argv[2:]))"
 )
 
 logger = logging.getLogger(__name__)
+
+
+def set_cancel_grace(seconds: float) -> None:
+    """Set the SIGTERM -> SIGKILL grace of this process's cancels (0 < seconds <= 10)."""
+    global CANCEL_GRACE_S
+    if not 0 < seconds <= 10.0:
+        raise ValueError(f"cancel grace must be in (0, 10] seconds, got {seconds!r}")
+    CANCEL_GRACE_S = seconds
+
 
 # Watcher task and wrapper process of each job launched by this server
 _TASKS: dict[str, asyncio.Task] = {}
@@ -107,7 +116,7 @@ async def launch(
     log_fd = os.open(state.log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC, 0o644)
     try:
         proc = subprocess.Popen(  # noqa: S603 — fixed interpreter and boot code; argv goes through the pipe
-            [sys.executable, "-I", "-c", _WRAPPER_BOOT, _PKG_ROOT, output_dir, job_id],
+            [sys.executable, "-I", "-c", _WRAPPER_BOOT, PKG_ROOT, output_dir, job_id],
             stdin=subprocess.PIPE,
             stdout=log_fd,
             stderr=log_fd,

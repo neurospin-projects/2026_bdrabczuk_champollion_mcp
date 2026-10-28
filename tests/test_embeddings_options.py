@@ -231,6 +231,7 @@ async def _embeddings_argv_via_pipeline(base: Path, launches: list, monkeypatch,
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("in_process_driver")
 class TestPipelineForwardsEmbeddingsOptions:
     @pytest.mark.parametrize(
         ("name", "flag"),
