@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import signal
@@ -33,12 +34,21 @@ POLL_S = 0.5
 CANCEL_GRACE_S = 10.0
 MAX_PARTIAL_LINE = 65536
 ERROR_WRAPPER_DIED = "job wrapper exited before the stage started; see log"
+ERROR_NOT_SIGNALLED = "cancelled from a record with no pgid or no start time: no process was signalled"
+REFUSED_SERVER_GROUP = "recorded pgid is the server process group, not signalled"
+REFUSED_PID_NOT_PGID = "recorded pid differs from pgid, not signalled"
+REFUSED_START_UNREADABLE = "cannot read the recorded pid's start time ({error}), not signalled"
+REFUSED_GONE = "recorded process gone, not signalled"
+REFUSED_REUSED = "recorded pid reused, not signalled"
+REFUSED_LEFT_GROUP = "recorded pid left its process group, not signalled"
 # Directory holding the champollion_sulcal_mcp package this server runs; the wrapper imports the same tree.
 _PKG_ROOT = str(Path(__file__).resolve().parent.parent)
 _WRAPPER_BOOT = (
     "import sys; sys.path.insert(0, sys.argv[1]); "
     "from champollion_sulcal_mcp.job_wrapper import main; sys.exit(main(sys.argv[2:]))"
 )
+
+logger = logging.getLogger(__name__)
 
 # Watcher task and wrapper process of each job launched by this server
 _TASKS: dict[str, asyncio.Task] = {}
@@ -214,32 +224,141 @@ async def _watch(proc: subprocess.Popen, job_id: str, output_dir: str, log_path:
             _PROCS.pop(job_id, None)
 
 
+class CancelRefused(RuntimeError):
+    """runner.cancel sent no signal: the recorded process could not be identified safely."""
+
+    def __init__(self, reason: str, state: JobState) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.state = state
+
+
+def _cancel_unsignalled(state: JobState) -> dict | None:
+    """Cancel a running or pending record that cannot be identified, without any signal."""
+    if state.status not in ("running", "pending"):
+        return None
+    return {"status": "cancelled", "ended_at": datetime.now(UTC).isoformat(), "error": ERROR_NOT_SIGNALLED}
+
+
+def _mark_cancelled(state: JobState) -> dict | None:
+    return {"status": "cancelled"} if state.status in ("running", "pending") else None
+
+
+def _refusal(state: JobState, owned: subprocess.Popen | None) -> str | None:
+    """Why the job's group must not be signalled (first reason in a fixed order), or None."""
+    if owned is not None:
+        return REFUSED_SERVER_GROUP if owned.pid <= 1 or owned.pid == os.getpgrp() else None
+    if state.pgid <= 1 or state.pgid == os.getpgrp():
+        return REFUSED_SERVER_GROUP
+    if state.pid != state.pgid:
+        return REFUSED_PID_NOT_PGID
+    try:
+        start = process_start_time(state.pid)
+    except (RuntimeError, OSError, ValueError) as error:
+        return REFUSED_START_UNREADABLE.format(error=error)
+    if start is None:
+        return REFUSED_GONE
+    if start != state.pid_start_time:
+        return REFUSED_REUSED
+    try:
+        if os.getpgid(state.pid) != state.pgid:
+            return REFUSED_LEFT_GROUP
+    except ProcessLookupError:
+        return REFUSED_GONE
+    return None
+
+
+def _group_members(pgid: int) -> list[tuple[int, int]]:
+    """(pid, start ticks) of every live, non-zombie process in group ``pgid``; read-only."""
+    members = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            data = Path(f"/proc/{name}/stat").read_bytes()
+            rest = data[data.rindex(b")") + 1 :].split()
+            if rest[0] in (b"Z", b"X", b"x") or int(rest[2]) != pgid:
+                continue
+            members.append((int(name), int(rest[19])))
+        except (FileNotFoundError, ProcessLookupError, ValueError, IndexError):
+            continue
+    return members
+
+
+def _group_is_ours(pgid: int, start: int | None, proc: subprocess.Popen | None) -> bool:
+    """Identity re-check of the job's group, made right before each signal."""
+    if pgid <= 1 or pgid == os.getpgrp():
+        return False
+    if proc is not None and proc.poll() is None:
+        return True
+    if start is None:
+        return False
+    try:
+        leader = process_start_time(pgid)
+    except (RuntimeError, OSError, ValueError):
+        return False
+    if leader is not None:
+        return leader == start
+    members = _group_members(pgid)
+    return bool(members) and all(member_start >= start for _pid, member_start in members)
+
+
+def _killpg(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError as error:
+        logger.warning("cannot signal job group %s: %s", pgid, error)
+
+
+async def _terminate_group(pgid: int, start: int | None, proc: subprocess.Popen | None) -> None:
+    """SIGTERM the job's group, then SIGKILL what survives the grace period; each signal after an identity check."""
+    if not _group_is_ours(pgid, start, proc):
+        logger.warning("job group %s identity not proven; not signalled", pgid)
+        return
+    _killpg(pgid, signal.SIGTERM)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CANCEL_GRACE_S
+    while loop.time() < deadline:
+        await asyncio.sleep(0.1)
+        if proc is not None:
+            proc.poll()
+        if not _group_members(pgid):
+            return
+    if _group_is_ours(pgid, start, proc):
+        _killpg(pgid, signal.SIGKILL)
+    else:
+        logger.warning("job group %s survived SIGTERM but its identity is not proven; SIGKILL not sent", pgid)
+
+
 async def cancel(output_dir: str, job_id: str) -> JobState:
+    """Cancel a job: SIGTERM to its process group, SIGKILL after CANCEL_GRACE_S.
+
+    Raises FileNotFoundError for an unknown job, CancelRefused when the recorded process cannot be
+    identified safely (nothing signalled, the job keeps its reconciled state).
+    """
     state = read_job(output_dir, job_id)
     if state.status not in ("running", "pending"):
         return state
-
-    # Mark cancelled first so the watcher keeps the status
-    state = await update_job(output_dir, job_id, status="cancelled")
-
     proc = _PROCS.get(job_id)
-    if proc is not None and proc.poll() is None:
-        # The wrapper is unreaped, so its pid (== pgid) cannot have been reused.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGTERM)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + CANCEL_GRACE_S
-        while loop.time() < deadline:
-            await asyncio.sleep(0.1)
-            if proc.poll() is not None:
-                break
-        else:
-            if proc.poll() is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-    elif state.pid is not None:
-        # Fallback: kill by PID
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(state.pid, signal.SIGTERM)
+    owned = proc if proc is not None and proc.poll() is None else None
 
+    if owned is None and None in (state.pid, state.pgid, state.pid_start_time):
+        return await update_job_with(output_dir, job_id, _cancel_unsignalled)
+
+    reason = _refusal(state, owned)
+    if reason is not None:
+        logger.warning("cancel of job %s refused: %s", job_id, reason)
+        current = await update_job_with(output_dir, job_id, _final_fields)
+        raise CancelRefused(reason, current)
+
+    current = await update_job_with(output_dir, job_id, _mark_cancelled)
+    if current.status != "cancelled":
+        return current
+    pgid = owned.pid if owned is not None else state.pgid
+    await _terminate_group(pgid, state.pid_start_time, owned)
+    if owned is None or owned.poll() is not None:
+        with contextlib.suppress(FileNotFoundError):
+            await update_job_with(output_dir, job_id, _final_fields)
     return read_job(output_dir, job_id)

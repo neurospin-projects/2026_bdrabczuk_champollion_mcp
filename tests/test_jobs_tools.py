@@ -332,3 +332,150 @@ async def test_get_job_log_unchanged_state_writes_nothing(tmp_output_dir, monkey
     await get_job_log(str(tmp_output_dir), state.job_id)
     assert calls == [state.job_id]
     assert _record_fingerprint(tmp_output_dir, state.job_id) == before
+
+
+# --- cancel_job refusals (TASK-MCPJOBS-BDRABCZUK-6E3BE75E16C9) ----------------------------------
+# Each case writes the running record a previous server process would have left, for throwaway
+# processes. os.kill and os.killpg are replaced by recorders that never deliver a signal, so a
+# wrong cancel cannot hit this process, its group or a reused pid.
+
+_REAL_KILL = __import__("os").kill
+_REFUSAL_REASONS = {
+    "reused_pid": "pid reused, not signalled",
+    "dead_pid": "process gone, not signalled",
+    "server_group": "server process group, not signalled",
+    "pid_not_pgid": "pid differs from pgid, not signalled",
+}
+
+
+@pytest.fixture
+def throwaway_procs():
+    """Factory for sleeping processes (own session unless told otherwise); all killed at teardown."""
+    import signal
+    import subprocess
+    import sys
+
+    procs: list[subprocess.Popen] = []
+
+    def spawn(*, new_session: bool = True, seconds: float = 60) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", f"import time; time.sleep({seconds})"],
+            stdin=subprocess.DEVNULL,
+            start_new_session=new_session,
+        )
+        procs.append(proc)
+        return proc
+
+    yield spawn
+
+    for proc in procs:
+        if proc.poll() is None:
+            _REAL_KILL(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=10)
+
+
+@pytest.fixture
+def no_signals(monkeypatch):
+    """Record os.kill / os.killpg calls without delivering any signal."""
+    import os
+
+    calls: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append(("kill", pid, sig)))
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append(("killpg", pgid, sig)))
+    return calls
+
+
+def _refusal_record(case: str, output_dir, spawn) -> str:
+    """Running record (pgid and pid_start_time set) for one refusal case; return its job id."""
+    import os
+    import uuid
+
+    from champollion_sulcal_mcp.job_store import log_path_for, process_start_time
+
+    if case == "reused_pid":
+        proc = spawn()
+        pid, pgid, start = proc.pid, proc.pid, process_start_time(proc.pid) + 1
+    elif case == "dead_pid":
+        proc = spawn(seconds=0.3)
+        pid, pgid, start = proc.pid, proc.pid, process_start_time(proc.pid)
+        proc.wait(timeout=10)
+    elif case == "server_group":
+        proc = spawn(new_session=False)
+        pid, pgid, start = proc.pid, os.getpgrp(), process_start_time(proc.pid)
+    elif case == "pid_not_pgid":
+        proc, other = spawn(), spawn()
+        pid, pgid, start = proc.pid, other.pid, process_start_time(proc.pid)
+    else:
+        raise AssertionError(case)
+    assert start is not None
+    job_id = f"refusal-{case.replace('_', '-')}-{uuid.uuid4().hex[:8]}"
+    write_job(
+        JobState(
+            job_id=job_id,
+            stage="test",
+            status="running",
+            pid=pid,
+            pgid=pgid,
+            pid_start_time=start,
+            output_dir=str(output_dir),
+            log_path=str(log_path_for(str(output_dir), job_id)),
+        )
+    )
+    return job_id
+
+
+async def _assert_refusal_error(output_dir, case: str, spawn) -> None:
+    import re
+
+    from fastmcp.exceptions import ToolError
+
+    job_id = _refusal_record(case, output_dir, spawn)
+    with pytest.raises(ToolError, match=re.escape(_REFUSAL_REASONS[case])):
+        await cancel_job(str(output_dir), job_id)
+
+
+@pytest.mark.integration
+async def test_cancel_job_reused_pid_raises_toolerror(tmp_output_dir, throwaway_procs, no_signals):
+    """REQ-MCPJOBS-BDRABCZUK-A0B8DED58C3B: a live pid with another start time raises "pid reused, not signalled"."""
+    await _assert_refusal_error(tmp_output_dir, "reused_pid", throwaway_procs)
+
+
+@pytest.mark.integration
+async def test_cancel_job_dead_pid_raises_toolerror(tmp_output_dir, throwaway_procs, no_signals):
+    """REQ-MCPJOBS-BDRABCZUK-50774AEA5442: a dead recorded pid raises "process gone, not signalled"."""
+    await _assert_refusal_error(tmp_output_dir, "dead_pid", throwaway_procs)
+
+
+@pytest.mark.integration
+async def test_cancel_job_server_group_raises_toolerror(tmp_output_dir, throwaway_procs, no_signals):
+    """REQ-MCPJOBS-BDRABCZUK-4794BEF4CE61: a pgid equal to the server's group raises "server process group, ..."."""
+    await _assert_refusal_error(tmp_output_dir, "server_group", throwaway_procs)
+
+
+@pytest.mark.integration
+async def test_cancel_job_pid_not_pgid_raises_toolerror(tmp_output_dir, throwaway_procs, no_signals):
+    """REQ-MCPJOBS-BDRABCZUK-4A38A43A5E25: a pgid differing from the pid raises "pid differs from pgid, ..."."""
+    await _assert_refusal_error(tmp_output_dir, "pid_not_pgid", throwaway_procs)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("case", sorted(_REFUSAL_REASONS))
+async def test_cancel_job_refusal_keeps_reconciled_status(tmp_output_dir, throwaway_procs, no_signals, case):
+    """REQ-MCPJOBS-BDRABCZUK-A2DD38343F7A.
+
+    A cancel that signals nothing leaves the stored status equal to what reconcile returns for the
+    record (failed for a reused or dead pid, running otherwise), never cancelled.
+    """
+    import contextlib
+
+    from fastmcp.exceptions import ToolError
+
+    from champollion_sulcal_mcp import job_store
+
+    job_id = _refusal_record(case, tmp_output_dir, throwaway_procs)
+    expected = job_store.reconcile(job_store.read_job(str(tmp_output_dir), job_id)).status
+
+    with contextlib.suppress(ToolError):
+        await cancel_job(str(tmp_output_dir), job_id)
+
+    assert job_store.read_job(str(tmp_output_dir), job_id).status == expected

@@ -78,11 +78,14 @@ async def list_jobs(
 
 
 async def cancel_job(output_dir: str, job_id: str, ctx: Context | None = None) -> dict:
-    """Cancel a running job by sending SIGTERM to its process."""
+    """Cancel a running job: SIGTERM to its process group, then SIGKILL after a grace period;
+    raises a ToolError naming the reason when the recorded process cannot be identified safely."""
     try:
         state = await runner.cancel(output_dir, job_id)
     except FileNotFoundError:
         raise ToolError(f"Unknown job_id {job_id!r} for output_dir {output_dir!r}") from None
+    except runner.CancelRefused as exc:
+        raise ToolError(f"Job {job_id} not cancelled: {exc.reason}") from None
     if ctx:
         await ctx.info(f"Job {job_id} cancel requested, status: {state.status}")
     return state.model_dump()

@@ -9,6 +9,7 @@ It prints nothing on a normal run: its stdout and stderr are the job log.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import json
 import os
 import signal
@@ -19,6 +20,54 @@ from champollion_sulcal_mcp.job_store import validate_job_id, write_rc
 
 _FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 _PREFIX = "champollion-mcp job wrapper"
+_PR_SET_CHILD_SUBREAPER = 36
+
+
+def _set_child_subreaper() -> bool:
+    """Adopt stage descendants orphaned while this process lives; False (warned) when unavailable."""
+    reason = None
+    if not sys.platform.startswith("linux"):
+        reason = "not Linux"
+    else:
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+                reason = os.strerror(ctypes.get_errno())
+        except AttributeError:
+            reason = "prctl not found"
+        except OSError as error:
+            reason = str(error)
+    if reason is None:
+        return True
+    print(
+        f"{_PREFIX}: warning: child subreaper unavailable ({reason}); orphaned stage processes are not adopted",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _wait_reaping(stage: subprocess.Popen) -> int:
+    """Wait for the stage while reaping the orphans this subreaper adopted; return the stage's exit code."""
+    while True:
+        try:
+            pid, status = os.waitpid(-1, 0)
+        except ChildProcessError:
+            return stage.wait()
+        if pid == stage.pid:
+            rc = os.waitstatus_to_exitcode(status)
+            stage.returncode = rc
+            return rc
+
+
+def _reap_adopted() -> None:
+    """Reap the adopted orphans that already exited, without waiting for live ones."""
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
 
 
 def _read_payload(stdin_fd: int) -> tuple[list[str], dict[str, str]] | None:
@@ -73,6 +122,7 @@ def main(args: list[str], stdin_fd: int = 0) -> int:
         write_rc(output_dir, job_id, -received[0])
         return 0
 
+    adopting = _set_child_subreaper()
     try:
         stage = subprocess.Popen(argv, stdin=subprocess.DEVNULL, env=env, close_fds=True)  # noqa: S603
     except OSError as error:
@@ -83,7 +133,7 @@ def main(args: list[str], stdin_fd: int = 0) -> int:
         with contextlib.suppress(ProcessLookupError):
             os.kill(stage.pid, received[-1])
 
-    rc = stage.wait()
+    rc = _wait_reaping(stage) if adopting else stage.wait()
     try:
         write_rc(output_dir, job_id, rc)
     except Exception:
@@ -91,4 +141,6 @@ def main(args: list[str], stdin_fd: int = 0) -> int:
 
         traceback.print_exc()
         return 1
+    if adopting:
+        _reap_adopted()
     return 0
