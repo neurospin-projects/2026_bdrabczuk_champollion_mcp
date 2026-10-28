@@ -1,9 +1,47 @@
 from __future__ import annotations
 
+import logging
+
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from .. import job_store, runner
+from ..job_store import JobState
+
+logger = logging.getLogger(__name__)
+
+
+async def _reconciled(output_dir: str, state: JobState) -> JobState:
+    """``state`` reconciled with its process; a running record found dead is persisted under the job lock."""
+    result = job_store.reconcile(state)
+    if result.status == state.status:
+        return result
+
+    def decide(cur: JobState) -> dict | None:
+        if cur.status != "running":
+            return None  # a terminal or cancelled status written meanwhile wins
+        fresh = job_store.reconcile(cur)  # an .rc written since the first read wins over "process gone"
+        if fresh.status == "running":
+            return None
+        return {
+            "status": fresh.status,
+            "returncode": fresh.returncode,
+            "error": fresh.error,
+            "ended_at": fresh.ended_at,
+        }
+
+    return await job_store.update_job_with(output_dir, state.job_id, decide)
+
+
+async def _reconciled_or_stored(output_dir: str, job_id: str, state: JobState) -> JobState:
+    """Reconciled ``state``; ToolError when the record vanished, the stored state when reconcile fails."""
+    try:
+        return await _reconciled(output_dir, state)
+    except FileNotFoundError:
+        raise ToolError(f"Unknown job_id {job_id!r} for output_dir {output_dir!r}") from None
+    except Exception as exc:
+        logger.warning("reconcile failed for job %s: %s", job_id, exc)
+        return state
 
 
 async def get_job_status(output_dir: str, job_id: str, ctx: Context | None = None) -> dict:
@@ -12,6 +50,7 @@ async def get_job_status(output_dir: str, job_id: str, ctx: Context | None = Non
         state = job_store.read_job(output_dir, job_id)
     except FileNotFoundError:
         raise ToolError(f"Unknown job_id {job_id!r} for output_dir {output_dir!r}") from None
+    state = await _reconciled_or_stored(output_dir, job_id, state)
     if ctx:
         await ctx.info(f"Job {job_id}: {state.status}")
     return state.model_dump()
@@ -24,7 +63,13 @@ async def list_jobs(
     ctx: Context | None = None,
 ) -> list[dict]:
     """List all jobs for a given output directory, optionally filtered by status."""
-    jobs = job_store.list_jobs(output_dir)
+    jobs = []
+    for job in job_store.list_jobs(output_dir):
+        try:
+            jobs.append(await _reconciled(output_dir, job))
+        except Exception as exc:
+            logger.warning("reconcile failed for job %s: %s", job.job_id, exc)
+            jobs.append(job)
     if status:
         jobs = [j for j in jobs if j.status == status]
     if ctx:
@@ -55,6 +100,7 @@ async def get_job_log(
         state = job_store.read_job(output_dir, job_id)
     except FileNotFoundError:
         raise ToolError(f"Unknown job_id {job_id!r} for output_dir {output_dir!r}") from None
+    state = await _reconciled_or_stored(output_dir, job_id, state)
 
     from pathlib import Path
 
