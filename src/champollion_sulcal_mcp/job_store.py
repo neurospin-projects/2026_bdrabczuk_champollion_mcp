@@ -8,6 +8,7 @@ import re
 import stat
 import tempfile
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -76,7 +77,7 @@ async def _get_lock(job_id: str) -> asyncio.Lock:
 
 
 def release_lock(job_id: str) -> None:
-    """Remove the per-job lock once the job is terminal. Called from runner._stream finally block."""
+    """Remove the per-job lock once the job is terminal. Called from the finally block of runner._watch."""
     _JOB_LOCKS.pop(job_id, None)
 
 
@@ -242,10 +243,19 @@ def list_jobs(output_dir: str) -> list[JobState]:
     return sorted(jobs, key=lambda j: j.started_at, reverse=True)
 
 
-async def update_job(output_dir: str, job_id: str, **fields) -> JobState:
+async def update_job_with(output_dir: str, job_id: str, decide: Callable[[JobState], dict | None]) -> JobState:
+    """Update a job with the fields ``decide`` returns for its current on-disk state, under the job lock.
+
+    ``decide`` sees the state read under the lock, so a concurrent cancel or terminal write is never
+    overwritten by a decision taken on a stale read. A falsy result writes nothing.
+    """
     lock = await _get_lock(job_id)
     async with lock:
         state = read_job(output_dir, job_id)
+        fields = decide(state)
+        if not fields:
+            return state
+        fields = dict(fields)
         # Handle nested progress updates
         if "progress" in fields and isinstance(fields["progress"], dict):
             current = state.progress.model_dump()
@@ -254,3 +264,7 @@ async def update_job(output_dir: str, job_id: str, **fields) -> JobState:
         updated = state.model_copy(update=fields)
         write_job(updated)
         return updated
+
+
+async def update_job(output_dir: str, job_id: str, **fields) -> JobState:
+    return await update_job_with(output_dir, job_id, lambda _state: fields)
