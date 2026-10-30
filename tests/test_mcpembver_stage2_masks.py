@@ -21,6 +21,7 @@ import pytest
 
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.tools import pipeline
+from tests.stage_files import seed_stage_files
 
 pytestmark = pytest.mark.unit
 
@@ -77,6 +78,7 @@ async def _cortical_tiles_argv_via_pipeline(base: Path, launches: list, monkeypa
     monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
 
     kwargs = _pipeline_kwargs(base)
+    seed_stage_files({**kwargs, **options})
     result = await pipeline.start_pipeline(**kwargs, **options)
 
     loop = asyncio.get_running_loop()

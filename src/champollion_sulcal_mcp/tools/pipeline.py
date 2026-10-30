@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import glob
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,6 +50,161 @@ def _compute_masks_version_dir(datasets_root: str, masks: str | None) -> Path:
     Complexity: O(1).
     """
     return Path(datasets_root) / DERIVATIVES_SUBDIR / CHAMPOLLION_SUBDIR / (masks or DEFAULT_MASKS_VERSION)
+
+
+# --- Stage file checks: each stage's input before launch, the previous stage's output when it ran in this job,
+# --- and snapshots' own output after its job succeeds. Present = at least one file matching a pattern.
+
+CORTICAL_TILES_FOLDER = "cortical_tiles-2026"  # mirrors champollion_pipeline utils/lib.py DERIVATIVES_FOLDER
+CROPS_SUBDIR = "crops"
+CROP_RESOLUTION = "2mm"
+CONFIGS_SUBDIR = "configs"
+DATASET_CONFIGS_SUBDIR = "dataset"
+_POST_RUN_STAGES = ("snapshots",)
+
+_T1_LABEL = "T1 MRI (*.nii, *.nii.gz)"
+_CROPS_LABEL = "skeleton crops (*/mask/*skeleton.npy)"
+_CROPS_PATTERNS = ("*/mask/*skeleton.npy",)
+
+
+@dataclass(frozen=True)
+class FileCheck:
+    """One expected-file check: ``what`` names it in the error, ``directory`` is the path the error gives."""
+
+    what: str
+    directory: Path
+    patterns: tuple[str, ...]
+
+    def present(self) -> bool:
+        """True iff directory is a directory holding at least one regular file matching a pattern; never raises."""
+        try:
+            if not self.directory.is_dir():
+                return False
+            return any(match.is_file() for pattern in self.patterns for match in self.directory.glob(pattern))
+        except (OSError, ValueError, NotImplementedError):
+            return False
+
+
+CheckBuilder = Callable[[str, Mapping], FileCheck]
+
+
+def _graphs_label(kwargs: Mapping) -> str:
+    return f"Morphologist graphs (*/{kwargs['path_to_graph']}/R*.arg)"
+
+
+def _graphs_patterns(kwargs: Mapping) -> tuple[str, ...]:
+    return (f"*/{glob.escape(kwargs['path_to_graph'])}/R*.arg",)
+
+
+def _crops_dir(root: str, folder: str, masks: str | None) -> Path:
+    return Path(root) / DERIVATIVES_SUBDIR / folder / CROPS_SUBDIR / (masks or DEFAULT_MASKS_VERSION) / CROP_RESOLUTION
+
+
+def _configs_dir(crop_path: str, dataset: str) -> Path | None:
+    """Region configs directory of ``dataset``, rooted at the first ``dataset`` component of crop_path; else None."""
+    parts = Path(crop_path).parts
+    if dataset not in parts:
+        return None
+    root = Path(*parts[: parts.index(dataset)])
+    return root / dataset / DERIVATIVES_SUBDIR / CHAMPOLLION_SUBDIR / CONFIGS_SUBDIR / DATASET_CONFIGS_SUBDIR / dataset
+
+
+def _morphologist_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    return FileCheck(_T1_LABEL, Path(kwargs["input_dir"]), ("*.nii", "*.nii.gz"))
+
+
+def _morphologist_output(output_dir: str, kwargs: Mapping) -> FileCheck:
+    return FileCheck(_graphs_label(kwargs), Path(output_dir), _graphs_patterns(kwargs))
+
+
+def _cortical_tiles_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    return FileCheck(_graphs_label(kwargs), Path(kwargs["input_dir"]), _graphs_patterns(kwargs))
+
+
+def _cortical_tiles_output(output_dir: str, kwargs: Mapping) -> FileCheck:
+    return FileCheck(_CROPS_LABEL, _crops_dir(output_dir, CORTICAL_TILES_FOLDER, kwargs.get("masks")), _CROPS_PATTERNS)
+
+
+def _config_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    return FileCheck(_CROPS_LABEL, Path(kwargs["crop_path"]), _CROPS_PATTERNS)
+
+
+def _config_output(output_dir: str, kwargs: Mapping) -> FileCheck:
+    directory = _configs_dir(kwargs["crop_path"], kwargs["dataset"])
+    if directory is None:
+        return FileCheck(f"dataset directory {kwargs['dataset']!r} in crop_path", Path(kwargs["crop_path"]), ())
+    return FileCheck("region configs (*.yaml)", directory, ("*.yaml",))
+
+
+def _embeddings_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    folder = kwargs.get("cortical_version") or CORTICAL_TILES_FOLDER
+    return FileCheck(_CROPS_LABEL, _crops_dir(kwargs["datasets_root"], folder, kwargs.get("masks")), _CROPS_PATTERNS)
+
+
+def _combine_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    return FileCheck(
+        "region embeddings (*/full_embeddings.csv)", version_dir / REGION_EMBEDDINGS_SUBDIR, ("*/full_embeddings.csv",)
+    )
+
+
+def _snapshots_input(output_dir: str, kwargs: Mapping) -> FileCheck:
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    return FileCheck("combined embeddings (*_embeddings.csv)", version_dir / EMBEDDINGS_SUBDIR, ("*_embeddings.csv",))
+
+
+def _snapshots_output(output_dir: str, kwargs: Mapping) -> FileCheck:
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    return FileCheck("snapshot PNG", version_dir / SNAPSHOTS_SUBDIR, ("*.png",))
+
+
+_INPUT_CHECKS: dict[str, CheckBuilder] = {
+    "morphologist": _morphologist_input,
+    "cortical_tiles": _cortical_tiles_input,
+    "config": _config_input,
+    "embeddings": _embeddings_input,
+    "combine": _combine_input,
+    "snapshots": _snapshots_input,
+}
+_OUTPUT_CHECKS: dict[str, CheckBuilder] = {
+    "morphologist": _morphologist_output,
+    "cortical_tiles": _cortical_tiles_output,
+    "config": _config_output,
+    "snapshots": _snapshots_output,
+}
+
+
+def _pre_launch_checks(stage_name: str, output_dir: str, done: Sequence[str], kwargs: Mapping) -> list[FileCheck]:
+    """The previous stage's output (when it ran in this job), then this stage's input; [] for an unknown stage."""
+    if stage_name not in STAGE_ORDER:
+        return []
+    index = STAGE_ORDER.index(stage_name)
+    previous = STAGE_ORDER[index - 1] if index else None
+    checks = []
+    if previous in done and previous in _OUTPUT_CHECKS:
+        checks.append(_OUTPUT_CHECKS[previous](output_dir, kwargs))
+    if stage_name in _INPUT_CHECKS:
+        checks.append(_INPUT_CHECKS[stage_name](output_dir, kwargs))
+    return checks
+
+
+def _post_run_checks(stage_name: str, output_dir: str, kwargs: Mapping) -> list[FileCheck]:
+    return [_OUTPUT_CHECKS[stage_name](output_dir, kwargs)] if stage_name in _POST_RUN_STAGES else []
+
+
+def _first_missing(checks: Sequence[FileCheck]) -> FileCheck | None:
+    return next((check for check in checks if not check.present()), None)
+
+
+async def _files_ok(output_dir: str, umbrella_job_id: str, checks: Sequence[FileCheck], prefix: str) -> bool:
+    """True when every check finds its files; else fail the umbrella with "<prefix> <what> at <directory>"."""
+    if not checks:
+        return True
+    missing = await asyncio.to_thread(_first_missing, list(checks))
+    if missing is None:
+        return True
+    await _finish(output_dir, umbrella_job_id, status="failed", error=f"{prefix} {missing.what} at {missing.directory}")
+    return False
 
 
 async def start_pipeline(
@@ -207,6 +364,9 @@ async def _execute_pipeline(
         if not _umbrella_running(output_dir, umbrella_job_id):
             return
         await _progress(output_dir, umbrella_job_id, current_stage=stage_name, stages_done=i, stages_total=total)
+        checks = _pre_launch_checks(stage_name, output_dir, active_stages[:i], kwargs)
+        if not await _files_ok(output_dir, umbrella_job_id, checks, f"Stage {stage_name!r} not started: missing"):
+            return
         try:
             result = await _launch_stage(stage_name, umbrella_output_dir=output_dir, **kwargs)
         except ToolError as e:
@@ -220,6 +380,9 @@ async def _execute_pipeline(
         if status != "succeeded":
             error = f"Stage {stage_name!r} failed (child job {result['job_id']}). Status: {status}."
             await _finish(output_dir, umbrella_job_id, status="failed", error=error)
+            return
+        checks = _post_run_checks(stage_name, output_dir, kwargs)
+        if not await _files_ok(output_dir, umbrella_job_id, checks, f"Stage {stage_name!r} output missing:"):
             return
     await _finish(
         output_dir, umbrella_job_id, status="succeeded", progress={"stages_done": total, "stages_total": total}

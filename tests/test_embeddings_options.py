@@ -26,6 +26,7 @@ from fastmcp.exceptions import ToolError
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.server import mcp
 from champollion_sulcal_mcp.tools import pipeline, stages
+from tests.stage_files import seed_stage_files
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 
@@ -211,6 +212,7 @@ async def _embeddings_argv_via_pipeline(base: Path, launches: list, monkeypatch,
     monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
 
     kwargs = _pipeline_kwargs(base)
+    seed_stage_files({**kwargs, **options})
     result = await pipeline.start_pipeline(**kwargs, **options)
 
     loop = asyncio.get_running_loop()
