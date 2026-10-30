@@ -232,6 +232,12 @@ environment the client is started from.
 
 Each job is persisted as `<output_dir>/.mcp_jobs/<job_id>.json` (atomic write) with its combined stdout/stderr log at `<output_dir>/.mcp_jobs/<job_id>.log`. Status lifecycle: `pending` → `running` → one of `succeeded` / `failed` / `cancelled`. `start_pipeline` additionally writes an "umbrella" job whose progress tracks `current_stage` / `stages_done` / `stages_total` and the currently active child `job_id`.
 
+Jobs are detached from the MCP server: a job keeps running after the MCP server exits, and the exit code of its process is recorded in a file next to the log. `start_pipeline` runs the start_pipeline stage chain in a detached driver process, so the chain also continues after the server exits.
+
+`get_job_status`, `list_jobs` and `get_job_log` reconcile a running job with the job's process before answering. If the process ended without writing an exit code, the job is reported as `failed` with the error "process gone without exit code"; its `returncode` is null. Read the output of `get_job_log` to find out what happened. A stage that ran and returned a nonzero exit code instead fails with "Process exited with code N" and that code as `returncode`.
+
+`cancel_job` sends SIGTERM to the job's process group, followed by SIGKILL to the surviving processes after a grace period.
+
 ## Testing
 
 ```bash

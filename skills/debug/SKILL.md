@@ -15,6 +15,11 @@ Call `get_job_log(output_dir, job_id)` and read the **full** output. Do not trun
 
 Search for known patterns in `references/error-patterns.md`. Match the error message to a root cause and fix.
 
+Two failure shapes differ:
+
+- "Process exited with code N": the stage ran and returned a nonzero exit code; the cause is in the log.
+- "process gone without exit code": the job's process vanished without writing an exit code (killed, or the machine went down), so `returncode` is null. Read the `get_job_log` output first to see how far the stage got, and only then relaunch the job.
+
 ## Step 3 — Report and Fix
 
 1. State the **root cause** clearly (not just the error message).

@@ -111,6 +111,8 @@ Poll `get_job_status(output_dir, job_id)` every 30 seconds. Report progress:
 - For pipeline jobs: show `current_stage` and `stages_done/stages_total`
 - For embeddings: show `fold_current/fold_total` and `percent`
 
+A job keeps running after the MCP server exits, so you can resume polling after a restart.
+
 Continue polling until status is `succeeded`, `failed`, or `cancelled`.
 
 ### Step 4 — On completion
@@ -137,6 +139,7 @@ When a job fails:
    - `FileNotFoundError` on `.arg` → wrong `path_to_graph`; verify with `ls {subjects_dir}/{subject}/{path_to_graph}/`
    - `CUDA out of memory` → use `cpu=True` (slower but avoids OOM) or free the GPU from other processes; `start_embeddings` has no job-count option (regions run one at a time)
    - `cortical_tiles failed with code` → check cortical_tiles log; often a bad `path_sk_with_hull`
+   - "process gone without exit code" → the job's process vanished without an exit code (`returncode` null); the log shows how far it got. This differs from "Process exited with code N", where the stage itself failed
 3. Report the root cause and exact fix
 4. Offer to re-launch with corrected parameters
 
