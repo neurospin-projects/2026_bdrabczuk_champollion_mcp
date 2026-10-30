@@ -498,3 +498,47 @@ async def test_cancel_legacy_job_records_cancelled_without_signal(
     assert stored.status == "cancelled"
     assert stored.ended_at is not None, "legacy cancelled record has no ended_at"
     assert "no process was signalled" in (stored.error or ""), f"error is {stored.error!r}"
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-0DDDE42A965C: launch records the host name and the boot id ---
+
+_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+
+async def _launch_and_read_record(output_dir) -> dict:
+    """Launch a short job, return the record file's JSON as written at launch, then wait for the job's end."""
+    import json
+
+    from champollion_sulcal_mcp.job_store import job_path, read_job
+
+    state = await runner.launch(
+        stage="test",
+        argv=["/bin/sh", "-c", "exit 0"],
+        output_dir=str(output_dir),
+        cwd="/tmp",
+        env={"PATH": "/bin:/usr/bin"},
+        args_snapshot={},
+    )
+    record = json.loads(job_path(str(output_dir), state.job_id).read_text())
+    await _until(lambda: read_job(str(output_dir), state.job_id).status != "running", timeout=10)
+    return record
+
+
+# REQ-MCPJOBS-BDRABCZUK-5C95A18EEB5B: the launch record holds socket.gethostname()
+@pytest.mark.integration
+async def test_launch_records_host(tmp_output_dir):
+    import socket
+
+    record = await _launch_and_read_record(tmp_output_dir)
+    assert record.get("host") == socket.gethostname()
+
+
+# REQ-MCPJOBS-BDRABCZUK-08EE5ED71189: the launch record holds the stripped boot id
+@pytest.mark.integration
+async def test_launch_records_boot_id(tmp_output_dir):
+    from pathlib import Path
+
+    if not Path(_BOOT_ID_PATH).exists():
+        pytest.skip("needs Linux /proc")
+    record = await _launch_and_read_record(tmp_output_dir)
+    assert record.get("boot_id") == Path(_BOOT_ID_PATH).read_text().strip()
