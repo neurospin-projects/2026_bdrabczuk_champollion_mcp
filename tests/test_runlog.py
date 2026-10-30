@@ -152,6 +152,7 @@ def _pipeline_kwargs(base: Path) -> dict:
 
 
 @pytest.mark.parametrize(("supplied", "expected"), [({}, True), ({"log": True}, True), ({"log": False}, False)])
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_hands_log_to_pipeline_run(monkeypatch, tmp_path, supplied, expected):
     """REQ-RUNLOG-BDRABCZUK-3DDA6C8E63A3: start_pipeline hands its log value, true when
     omitted, to the background pipeline run, whose kwargs reach _launch_stage."""

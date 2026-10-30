@@ -16,7 +16,7 @@ from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.job_store import JobState, write_job
 from champollion_sulcal_mcp.tools import pipeline
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("in_process_driver")]
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 TERMINAL = ("succeeded", "failed", "cancelled")

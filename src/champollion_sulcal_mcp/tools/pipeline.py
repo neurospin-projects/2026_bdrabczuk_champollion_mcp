@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,7 +13,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from .. import job_store, runner
-from ..job_store import JobProgress, JobState, write_job
+from ..job_store import JobState
 from . import stages
 
 logger = logging.getLogger(__name__)
@@ -20,6 +24,9 @@ EMBEDDINGS_SUBDIR = "embeddings"
 SNAPSHOTS_SUBDIR = "snapshots"
 REGION_EMBEDDINGS_SUBDIR = "region_embeddings"
 DEFAULT_MASKS_VERSION = "canonical_25"
+
+DRIVER_MODULE = "champollion_sulcal_mcp.pipeline_driver"
+CHILD_POLL_S = 2.0
 
 STAGE_ORDER = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 
@@ -81,63 +88,91 @@ async def start_pipeline(
     """
     skip = set(skip_stages or [])
     active_stages = [s for s in STAGE_ORDER if s not in skip]
-
-    # Create umbrella job
-    umbrella = JobState(
+    chain = {
+        "input_dir": input_dir,
+        "path_to_graph": path_to_graph,
+        "path_sk_with_hull": path_sk_with_hull,
+        "crop_path": crop_path,
+        "dataset": dataset,
+        "models_path": models_path,
+        "datasets_root": datasets_root,
+        "sk_qc_path": sk_qc_path,
+        "njobs": njobs,
+        "parallel": parallel,
+        "cpu": cpu,
+        "labelling_session": labelling_session,
+        "reference_data_dir": reference_data_dir,
+        "overwrite": overwrite,
+        "run_cka": run_cka,
+        "regions": regions,
+        "masks": masks,
+        "masks_version": masks_version,
+        "cortical_version": cortical_version,
+        "log": log,
+    }
+    snapshot = {
+        "input_dir": input_dir,
+        "output_dir": output_dir,
+        "skip_stages": sorted(skip),
+        "active_stages": active_stages,
+        "chain": chain,
+    }
+    state = await runner.launch(
         stage="pipeline",
-        status="running",
+        argv=_driver_argv(output_dir),
         output_dir=output_dir,
-        log_path=str(job_store.log_path_for(output_dir, "PLACEHOLDER")),
-        args={"input_dir": input_dir, "output_dir": output_dir, "skip_stages": list(skip)},
-        progress=JobProgress(
-            stages_done=0,
-            stages_total=len(active_stages),
-            current_stage=active_stages[0] if active_stages else None,
-        ),
+        cwd=output_dir,
+        env=_driver_env(),
+        args_snapshot=snapshot,
     )
-    umbrella = umbrella.model_copy(update={"log_path": str(job_store.log_path_for(output_dir, umbrella.job_id))})
-    job_store.jobs_dir(output_dir)
-    write_job(umbrella)
+    if state.status == "failed":
+        raise ToolError(f"Pipeline driver failed to start: {state.error}")
+    await _initial_progress(output_dir, state.job_id, active_stages)
 
     if ctx:
-        await ctx.info(f"Launching pipeline: {len(active_stages)} stages, job_id={umbrella.job_id}")
+        await ctx.info(f"Launching pipeline: {len(active_stages)} stages, job_id={state.job_id}")
 
-    task = asyncio.create_task(
-        _run_pipeline(
-            umbrella_job_id=umbrella.job_id,
-            output_dir=output_dir,
-            active_stages=active_stages,
-            input_dir=input_dir,
-            path_to_graph=path_to_graph,
-            path_sk_with_hull=path_sk_with_hull,
-            crop_path=crop_path,
-            dataset=dataset,
-            models_path=models_path,
-            datasets_root=datasets_root,
-            sk_qc_path=sk_qc_path,
-            njobs=njobs,
-            parallel=parallel,
-            cpu=cpu,
-            labelling_session=labelling_session,
-            reference_data_dir=reference_data_dir,
-            overwrite=overwrite,
-            run_cka=run_cka,
-            regions=regions,
-            masks=masks,
-            masks_version=masks_version,
-            cortical_version=cortical_version,
-            log=log,
-        )
-    )
-    task.add_done_callback(_handle_task_exception)
-
-    return {"job_id": umbrella.job_id, "status": "running", "stage": "pipeline", "active_stages": active_stages}
+    return {"job_id": state.job_id, "status": "running", "stage": "pipeline", "active_stages": active_stages}
 
 
-def _handle_task_exception(task: asyncio.Task) -> None:
-    """Log and suppress exceptions from the background pipeline task."""
-    if not task.cancelled() and task.exception() is not None:
-        logger.error("Unhandled exception in pipeline task: %s", task.exception(), exc_info=task.exception())
+def _driver_argv(output_dir: str) -> list[str]:
+    """Command of the detached pipeline driver; ``-P`` keeps the cwd off sys.path."""
+    return [sys.executable, "-P", "-m", DRIVER_MODULE, output_dir]
+
+
+def _driver_env() -> dict[str, str]:
+    """The server environment, with the server's package tree first on PYTHONPATH."""
+    paths = [runner.PKG_ROOT]
+    if os.environ.get("PYTHONPATH"):
+        paths.append(os.environ["PYTHONPATH"])
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
+
+
+async def _initial_progress(output_dir: str, job_id: str, active_stages: list[str]) -> None:
+    """Write the initial progress unless the driver already wrote progress or ended the job."""
+
+    def decide(state: JobState) -> dict | None:
+        if state.status != "running" or state.progress.stages_total is not None:
+            return None
+        current = active_stages[0] if active_stages else None
+        return {"progress": {"stages_done": 0, "stages_total": len(active_stages), "current_stage": current}}
+
+    with contextlib.suppress(FileNotFoundError):
+        await job_store.update_job_with(output_dir, job_id, decide)
+
+
+def _while_running(fields: dict) -> Callable[[JobState], dict | None]:
+    return lambda state: fields if state.status == "running" else None
+
+
+async def _finish(output_dir: str, umbrella_job_id: str, **fields) -> None:
+    """End the umbrella job, unless it is no longer running (a cancel is never overwritten)."""
+    fields["ended_at"] = datetime.now(UTC).isoformat()
+    await job_store.update_job_with(output_dir, umbrella_job_id, _while_running(fields))
+
+
+async def _progress(output_dir: str, umbrella_job_id: str, **progress) -> None:
+    await job_store.update_job_with(output_dir, umbrella_job_id, _while_running({"progress": progress}))
 
 
 async def _run_pipeline(
@@ -150,16 +185,15 @@ async def _run_pipeline(
         await _execute_pipeline(umbrella_job_id, output_dir, active_stages, **kwargs)
     except Exception as exc:
         logger.exception("Pipeline task crashed unexpectedly")
-        import contextlib
-
         with contextlib.suppress(Exception):
-            await job_store.update_job(
-                output_dir,
-                umbrella_job_id,
-                status="failed",
-                error=f"Pipeline crashed: {exc}",
-                ended_at=datetime.now(UTC).isoformat(),
-            )
+            await _finish(output_dir, umbrella_job_id, status="failed", error=f"Pipeline crashed: {exc}")
+
+
+def _umbrella_running(output_dir: str, umbrella_job_id: str) -> bool:
+    try:
+        return job_store.read_job(output_dir, umbrella_job_id).status == "running"
+    except FileNotFoundError:
+        return False
 
 
 async def _execute_pipeline(
@@ -168,90 +202,52 @@ async def _execute_pipeline(
     active_stages: list[str],
     **kwargs,
 ) -> None:
+    total = len(active_stages)
     for i, stage_name in enumerate(active_stages):
-        # Check if umbrella was cancelled
-        try:
-            umbrella = job_store.read_job(output_dir, umbrella_job_id)
-        except FileNotFoundError:
+        if not _umbrella_running(output_dir, umbrella_job_id):
             return
-        if umbrella.status == "cancelled":
-            return
-
-        await job_store.update_job(
-            output_dir,
-            umbrella_job_id,
-            progress={"current_stage": stage_name, "stages_done": i, "stages_total": len(active_stages)},
-        )
-
+        await _progress(output_dir, umbrella_job_id, current_stage=stage_name, stages_done=i, stages_total=total)
         try:
             result = await _launch_stage(stage_name, umbrella_output_dir=output_dir, **kwargs)
         except ToolError as e:
-            await job_store.update_job(
-                output_dir,
-                umbrella_job_id,
-                status="failed",
-                error=f"Stage {stage_name!r} failed to launch: {e}",
-                ended_at=datetime.now(UTC).isoformat(),
+            await _finish(
+                output_dir, umbrella_job_id, status="failed", error=f"Stage {stage_name!r} failed to launch: {e}"
             )
             return
+        status = await _await_child(output_dir, umbrella_job_id, stage_name, result)
+        if status is None:
+            return
+        if status != "succeeded":
+            error = f"Stage {stage_name!r} failed (child job {result['job_id']}). Status: {status}."
+            await _finish(output_dir, umbrella_job_id, status="failed", error=error)
+            return
+    await _finish(
+        output_dir, umbrella_job_id, status="succeeded", progress={"stages_done": total, "stages_total": total}
+    )
 
-        child_job_id = result["job_id"]
-        child_output_dir = result["output_dir"]  # use child's actual output_dir for polling
 
-        await job_store.update_job(
-            output_dir,
-            umbrella_job_id,
-            progress={
-                "current_stage": stage_name,
-                "stages_done": i,
-                "stages_total": len(active_stages),
-                "current_child_job_id": child_job_id,
-            },
-        )
-
-        # Wait for child job to complete
-        while True:
-            await asyncio.sleep(2.0)
-            try:
-                child = job_store.read_job(child_output_dir, child_job_id)
-            except FileNotFoundError:
-                # Job file missing — treat as failed
-                await job_store.update_job(
-                    output_dir,
-                    umbrella_job_id,
-                    status="failed",
-                    error=f"Stage {stage_name!r} job file disappeared unexpectedly.",
-                    ended_at=datetime.now(UTC).isoformat(),
-                )
-                return
-            if child.status in ("succeeded", "failed", "cancelled"):
-                break
+async def _await_child(output_dir: str, umbrella_job_id: str, stage_name: str, result: dict) -> str | None:
+    """Final status of the stage's child job, or None when the chain must stop (umbrella ended or child gone)."""
+    child_id = result["job_id"]
+    child_output_dir = result["output_dir"]  # use child's actual output_dir for polling
+    await _progress(output_dir, umbrella_job_id, current_stage=stage_name, current_child_job_id=child_id)
+    while True:
+        await asyncio.sleep(CHILD_POLL_S)
+        try:
+            child = job_store.read_job(child_output_dir, child_id)
+        except FileNotFoundError:
+            error = f"Stage {stage_name!r} job file disappeared unexpectedly."
+            await _finish(output_dir, umbrella_job_id, status="failed", error=error)
+            return None
+        if child.status in ("succeeded", "failed", "cancelled"):
+            return child.status
+        if not _umbrella_running(output_dir, umbrella_job_id):
             # Propagate cancellation
             try:
-                umbrella = job_store.read_job(output_dir, umbrella_job_id)
-            except FileNotFoundError:
-                return
-            if umbrella.status == "cancelled":
-                await runner.cancel(child_output_dir, child_job_id)
-                return
-
-        if child.status != "succeeded":
-            await job_store.update_job(
-                output_dir,
-                umbrella_job_id,
-                status="failed",
-                error=f"Stage {stage_name!r} failed (child job {child_job_id}). Status: {child.status}.",
-                ended_at=datetime.now(UTC).isoformat(),
-            )
-            return
-
-    await job_store.update_job(
-        output_dir,
-        umbrella_job_id,
-        status="succeeded",
-        ended_at=datetime.now(UTC).isoformat(),
-        progress={"stages_done": len(active_stages), "stages_total": len(active_stages)},
-    )
+                await runner.cancel(child_output_dir, child_id)
+            except (FileNotFoundError, runner.CancelRefused) as error:
+                logger.warning("cancel of stage job %s: %s", child_id, error)
+            return None
 
 
 async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> dict:

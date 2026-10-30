@@ -103,6 +103,7 @@ async def test_launch_stage_cortical_tiles_labelling_session_defaults_to_none(re
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_hands_labelling_session_to_pipeline_run(monkeypatch, tmp_path):
     """REQ-LABELSESSION-02: start_pipeline must accept labelling_session and hand
     it to the background pipeline run, whose kwargs reach _launch_stage.
@@ -186,6 +187,7 @@ async def test_snapshots_argv_embeddings_dir_matches_combine_output_path(fake_pi
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_hands_reference_data_dir_to_pipeline_run(monkeypatch, tmp_path):
     """REQ-MCP-SNAPREF-02: start_pipeline accepts reference_data_dir and hands it to
     the background pipeline run, whose kwargs reach _launch_stage.

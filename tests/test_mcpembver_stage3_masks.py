@@ -116,6 +116,7 @@ async def _config_call_via_pipeline(base: Path, monkeypatch, **options) -> dict:
 
 
 @pytest.mark.parametrize("masks", ["canonical_25", "canonical_corrected_26_1"])
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_forwards_supplied_masks_to_start_config(tmp_path, monkeypatch, masks):
     """start_pipeline(masks=<value>) calls start_config with masks=<value>."""
     call = await _config_call_via_pipeline(tmp_path, monkeypatch, masks=masks)
@@ -123,6 +124,7 @@ async def test_start_pipeline_forwards_supplied_masks_to_start_config(tmp_path, 
 
 
 @pytest.mark.parametrize("masks", [None, ""], ids=["none", "empty"])
+@pytest.mark.usefixtures("in_process_driver")
 async def test_start_pipeline_omits_masks_from_start_config_when_unset(tmp_path, monkeypatch, masks):
     """With masks unset or empty, start_config still receives crop_path and dataset only."""
     call = await _config_call_via_pipeline(tmp_path, monkeypatch, masks=masks)

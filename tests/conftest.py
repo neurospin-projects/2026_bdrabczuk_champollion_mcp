@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from champollion_sulcal_mcp import runner
-from champollion_sulcal_mcp.job_store import JobState, write_job
+from champollion_sulcal_mcp import pipeline_driver, runner
+from champollion_sulcal_mcp.job_store import JobState, log_path_for, write_job
 
 
 @pytest.fixture
@@ -114,3 +115,28 @@ def launches(monkeypatch):
 
     monkeypatch.setattr(runner, "launch", fake_launch)
     return calls
+
+
+@pytest.fixture
+def in_process_driver(monkeypatch, launches):
+    """Run start_pipeline's driver in this process (TASK-MCPJOBS-BDRABCZUK-E103DF874445).
+
+    The "pipeline" launch writes the umbrella record as runner.launch would and schedules
+    pipeline_driver.run_chain; every stage launch goes to the ``launches`` recorder.
+    """
+    tasks: list[asyncio.Task] = []
+    record_stage = runner.launch
+
+    async def fake_launch(stage, argv, output_dir, cwd, env, args_snapshot):
+        if stage != "pipeline":
+            return await record_stage(stage, argv, output_dir, cwd, env, args_snapshot)
+        state = JobState(
+            stage=stage, status="running", output_dir=output_dir, log_path="/tmp/fake.log", args=args_snapshot
+        )
+        state = state.model_copy(update={"log_path": str(log_path_for(output_dir, state.job_id))})
+        write_job(state)
+        tasks.append(asyncio.create_task(pipeline_driver.run_chain(output_dir, state.job_id)))
+        return state
+
+    monkeypatch.setattr(runner, "launch", fake_launch)
+    return tasks
