@@ -17,6 +17,21 @@ def _require_absolute(path: str, name: str) -> None:
         raise ToolError(f"{name} must be an absolute path, got: {path!r}")
 
 
+def _subject_name_problem(subject: str) -> str | None:
+    """Why `subject` is not a plain directory name, or None when it is.
+
+    Mirrors the pipeline's utils/subject_name.py::subject_name_problem (same reasons, same order);
+    os.sep / os.altsep are read at call time.
+    """
+    if subject == "":
+        return "it is empty"
+    if subject in (os.curdir, os.pardir):
+        return "it is '.' or '..'"
+    if os.sep in subject or (os.altsep and os.altsep in subject):
+        return "it contains a path separator"
+    return None
+
+
 def _with_log(argv: list[str], log: bool) -> list[str]:
     """Append a bare --log so the stage writes its run log to its default .log folder; it must stay last (nargs="?")."""
     return [*argv, "--log"] if log else argv
@@ -518,6 +533,9 @@ async def purge_subject(
     _require_absolute(derivatives, "derivatives")
     roots = await get_roots(ctx)
     validate_within_roots(derivatives, roots, "derivatives")
+    reason = _subject_name_problem(subject)
+    if reason is not None:
+        raise ToolError(f"Refusing subject {subject!r}: {reason}.")
 
     try:
         loc = preflight.detect()
