@@ -274,7 +274,8 @@ Call `start_<stage>` with the parameters above. See `references/stage-params.md`
 1. Report the `job_id` and relevant output path to the user.
 2. Switch to **monitor** skill behavior to poll until completion.
 3. On terminal state:
-   - **succeeded** → report output locations and suggest sanity checks (below)
+   - **succeeded** with `outcome` `partial` → some subjects were left out: report `skipped_subjects` first, then the output locations and sanity checks (below)
+   - **succeeded** (`outcome` null) → report output locations and suggest sanity checks (below)
    - **failed** → switch to **debug** skill behavior
 
 ## Output Locations (full pipeline)

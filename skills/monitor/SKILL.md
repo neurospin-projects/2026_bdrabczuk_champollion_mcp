@@ -42,7 +42,8 @@ Show elapsed time if `started_at` is available. Warn if a job has been running m
 
 | Status | Action |
 |--------|--------|
-| `succeeded` | Report output locations; suggest sanity checks from `run-pipeline` skill |
+| `succeeded` with `outcome` `partial` | The stage (or at least one stage of a pipeline) exited with code 3 and left some subjects out. Report `skipped_subjects` first, then the output locations; suggest sanity checks from `run-pipeline` skill |
+| `succeeded` (`outcome` null) | Report output locations; suggest sanity checks from `run-pipeline` skill |
 | `failed` | Switch to **debug** skill — call `get_job_log` and diagnose |
 | `failed` with error "process gone without exit code" | The job's process ended without writing an exit code (`returncode` is null); call `get_job_log` to see how far it got before relaunching |
 | `cancelled` | Report cancelled; offer to re-launch |

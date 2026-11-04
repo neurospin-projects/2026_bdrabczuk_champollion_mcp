@@ -18,6 +18,7 @@ Search for known patterns in `references/error-patterns.md`. Match the error mes
 Two failure shapes differ:
 
 - "Process exited with code N": the stage ran and returned a nonzero exit code; the cause is in the log.
+- Exit code 3 is not a failure: the job is `succeeded` with `outcome` `partial`, and `skipped_subjects` names the subjects the stage left out (cortical_tiles only). Look there before debugging.
 - "process gone without exit code": the job's process vanished without writing an exit code (killed, or the machine went down), so `returncode` is null. Read the `get_job_log` output first to see how far the stage got, and only then relaunch the job.
 
 ## Step 3 — Report and Fix

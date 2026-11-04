@@ -117,6 +117,8 @@ Continue polling until status is `succeeded`, `failed`, or `cancelled`.
 
 ### Step 4 — On completion
 
+**succeeded** with `outcome` `partial` → some subjects were left out (a stage exited with code 3). Report `skipped_subjects` first, then continue as below.
+
 **succeeded** → Report output locations and run sanity checks:
 ```bash
 # 28 sulcal region folders?
