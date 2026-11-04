@@ -13,7 +13,6 @@ interpreter (generate_embeddings.py imports torch at module level).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -23,10 +22,9 @@ import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
-from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.server import mcp
-from champollion_sulcal_mcp.tools import pipeline, stages
-from tests.stage_files import seed_stage_files
+from champollion_sulcal_mcp.tools import stages
+from tests.stage_files import stage_argv_via_pipeline
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 
@@ -34,8 +32,6 @@ ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine
 # fixture later points the variable at a fake one); None when the variable is unset.
 _ENV_PIPELINE_DIR = os.environ.get("CHAMPOLLION_PIPELINE_DIR")
 _REAL_PIPELINE_DIR = Path(_ENV_PIPELINE_DIR) if _ENV_PIPELINE_DIR else None
-
-_real_sleep = asyncio.sleep
 
 
 def _embeddings_kwargs(base: Path) -> dict:
@@ -205,31 +201,7 @@ async def _embeddings_argv_via_pipeline(base: Path, launches: list, monkeypatch,
     The real _launch_stage and start_embeddings run; runner.launch is the recorder.
     Once the stage is launched its child job is marked succeeded so the umbrella ends.
     """
-
-    async def fast_sleep(delay, *args, **kwargs):
-        await _real_sleep(0)
-
-    monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
-
-    kwargs = _pipeline_kwargs(base)
-    seed_stage_files({**kwargs, **options})
-    result = await pipeline.start_pipeline(**kwargs, **options)
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + 5.0
-    while not launches and loop.time() < deadline:
-        await _real_sleep(0.01)
-    assert launches, "embeddings stage was never launched"
-
-    child_dir = launches[0]["output_dir"]
-    for job_file in (Path(child_dir) / ".mcp_jobs").glob("*.json"):
-        await job_store.update_job(child_dir, job_file.stem, status="succeeded")
-
-    while loop.time() < deadline:
-        if job_store.read_job(kwargs["output_dir"], result["job_id"]).status in ("succeeded", "failed", "cancelled"):
-            break
-        await _real_sleep(0.01)
-    return launches[0]["argv"]
+    return await stage_argv_via_pipeline("embeddings", _pipeline_kwargs(base), launches, monkeypatch, **options)
 
 
 @pytest.mark.unit

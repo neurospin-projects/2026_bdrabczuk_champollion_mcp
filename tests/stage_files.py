@@ -1,4 +1,4 @@
-"""Seed the files start_pipeline's stage checks look for, so chain tests on synthetic trees pass the checks.
+"""Shared helpers of the start_pipeline chain tests: seed the checked files, fake the stages, run one stage.
 
 Not a test module (no test_ prefix). seed_stage_files writes one matching file per checked path, derived from
 start_pipeline kwargs; it uses its own layout constants, not the production ones, so a layout change in
@@ -7,13 +7,19 @@ tools/pipeline.py still shows up in tests/test_pipeline_stage_checks.py.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+
+from champollion_sulcal_mcp import job_store
+from champollion_sulcal_mcp.tools import pipeline
 
 CT_FOLDER = "cortical_tiles-2026"
 MASKS = "canonical_25"
 RESOLUTION = "2mm"
 SUBJECT = "sub-0001"
 REGION = "S.C.-sylv._left"
+
+_real_sleep = asyncio.sleep
 
 
 def _touch(path: Path) -> None:
@@ -45,3 +51,47 @@ def seed_stage_files(kwargs: dict) -> None:
     _touch(version_dir / "region_embeddings" / REGION / "full_embeddings.csv")
     _touch(version_dir / "embeddings" / f"{REGION}_embeddings.csv")
     _touch(version_dir / "snapshots" / "umap.png")
+
+
+def launch_reply(job_id: str, stage_name: str, child_dir: Path) -> dict:
+    """The reply of a fake pipeline._launch_stage for a child job in `child_dir`."""
+    return {"job_id": job_id, "status": "running", "stage": stage_name, "output_dir": str(child_dir)}
+
+
+def install_fake_stages(fake_class: type, tmp_path: Path, monkeypatch):
+    """Replace pipeline._launch_stage with a `fake_class` writing child jobs under tmp_path/children."""
+    fake = fake_class(tmp_path / "children")
+    monkeypatch.setattr(pipeline, "_launch_stage", fake)
+    return fake
+
+
+async def stage_argv_via_pipeline(stage: str, kwargs: dict, launches: list, monkeypatch, **options) -> list[str]:
+    """Run start_pipeline on `kwargs`; return the argv of the first launch recorded in `launches`.
+
+    The real _launch_stage and start_<stage> run; runner.launch is the recorder.
+    Once the stage is launched its child job is marked succeeded so the umbrella ends.
+    """
+
+    async def fast_sleep(delay, *args, **kwargs):
+        await _real_sleep(0)
+
+    monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
+
+    seed_stage_files({**kwargs, **options})
+    result = await pipeline.start_pipeline(**kwargs, **options)
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while not launches and loop.time() < deadline:
+        await _real_sleep(0.01)
+    assert launches, f"{stage} stage was never launched"
+
+    child_dir = launches[0]["output_dir"]
+    for job_file in (Path(child_dir) / ".mcp_jobs").glob("*.json"):
+        await job_store.update_job(child_dir, job_file.stem, status="succeeded")
+
+    while loop.time() < deadline:
+        if job_store.read_job(kwargs["output_dir"], result["job_id"]).status in ("succeeded", "failed", "cancelled"):
+            break
+        await _real_sleep(0.01)
+    return launches[0]["argv"]

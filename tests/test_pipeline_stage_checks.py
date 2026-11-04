@@ -21,6 +21,7 @@ import pytest
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.job_store import JobState, write_job
 from champollion_sulcal_mcp.tools import pipeline
+from tests.stage_files import install_fake_stages, launch_reply
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("in_process_driver")]
 
@@ -155,14 +156,12 @@ class FakeStages:
             self._write_output(stage_name)
         child = JobState(stage=stage_name, status="succeeded", output_dir=str(self.child_dir), log_path="/tmp/x.log")
         write_job(child)
-        return {"job_id": child.job_id, "status": "running", "stage": stage_name, "output_dir": str(self.child_dir)}
+        return launch_reply(child.job_id, stage_name, self.child_dir)
 
 
 @pytest.fixture
 def fake_stages(tmp_path, monkeypatch):
-    fake = FakeStages(tmp_path / "children")
-    monkeypatch.setattr(pipeline, "_launch_stage", fake)
-    return fake
+    return install_fake_stages(FakeStages, tmp_path, monkeypatch)
 
 
 @pytest.fixture
