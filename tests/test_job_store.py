@@ -323,10 +323,10 @@ def test_reconcile_rc_wins_over_live_pid(tmp_output_dir):
     assert result.returncode == 0
 
 
-# REQ #12: nonzero rc -> failed
+# REQ #12: nonzero rc -> failed, except exit 3 (partial, user decision 2026-11-04); -3 is death by signal 3
 @pytest.mark.unit
 @linux_only
-@pytest.mark.parametrize("code", [1, 2, -9, 137])
+@pytest.mark.parametrize("code", [1, 2, 4, -3, -9, 137, 255])
 def test_reconcile_rc_nonzero_fails(tmp_output_dir, code):
     state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1)
     _write_rc_file(tmp_output_dir, state.job_id, f"{code}\n")
@@ -335,6 +335,128 @@ def test_reconcile_rc_nonzero_fails(tmp_output_dir, code):
     assert result.returncode == code
     assert result.ended_at is not None
     assert result.error == f"Process exited with code {code}. See log for details."
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-3B8937480E8F: a stage exit 3 is a partial outcome, not a failure ---
+
+ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
+LOST_SIDE_LINE = (
+    "ERROR:generate_sulcal_regions.py: Run summary: side R lost: NoValidSubjectError raised, no skip entry\n"
+)
+
+
+def _summary_line(side: str, step: str, names: list[str], causes: str = "ValueError: no graph, no mask") -> str:
+    """One run-summary record as cortical_tiles generate_sulcal_regions logs it to stderr (the job log)."""
+    subjects = ", ".join(names)
+    return (
+        f"ERROR:generate_sulcal_regions.py: Run summary: side {side}, step {step}: "
+        f"{len(names)} skipped subject(s): {subjects}; causes: {causes}\n"
+    )
+
+
+def _exit_3_job(out, stage: str = "cortical_tiles", log: str | bytes | None = None) -> JobState:
+    state = _running(out, pid=_dead_pid(), pid_start_time=1).model_copy(update={"stage": stage})
+    _write_rc_file(out, state.job_id, "3\n")
+    if isinstance(log, str):
+        Path(state.log_path).write_text(log)
+    elif log is not None:
+        Path(state.log_path).write_bytes(log)
+    return state
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("stage", ALL_STAGES)
+def test_reconcile_rc_3_is_partial(tmp_output_dir, stage):
+    """REQ-MCPJOBS-BDRABCZUK-1531D2654281: exit 3 of any stage is succeeded with outcome partial, no error."""
+    result = js.reconcile(_exit_3_job(tmp_output_dir, stage=stage))
+    assert result.status == "succeeded"
+    assert result.model_dump().get("outcome") == "partial"
+    assert result.returncode == 3
+    assert result.error is None
+    _assert_utc_iso(result.ended_at)
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("code", [0, 1, 4, -3, 137])
+def test_reconcile_rc_other_than_3_has_no_outcome(tmp_output_dir, code):
+    """REQ-MCPJOBS-BDRABCZUK-E2CE5413E75D: an exit code other than 3 gives outcome None."""
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1)
+    _write_rc_file(tmp_output_dir, state.job_id, f"{code}\n")
+    assert js.reconcile(state).model_dump().get("outcome", "absent") is None
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("before", [b"", b"\xff\xfe binary stage output\n"], ids=["text", "undecodable_bytes"])
+def test_reconcile_rc_3_lists_skipped_subjects_of_cortical_tiles(tmp_output_dir, before):
+    """REQ-MCPJOBS-BDRABCZUK-D39EEC205C86: the sorted distinct names of the run-summary lines, over sides and steps."""
+    log = "".join(
+        [
+            "INFO:generate_sulcal_regions.py: 2 skipped subject(s) so far\n",
+            _summary_line("L", "generate_skeletons", ["sub-02", "sub-01_ses-1"]),
+            _summary_line("R", "generate_crops", ["sub-03", "sub-02"], causes="KeyError: sub-99, sub-98"),
+            LOST_SIDE_LINE,
+        ]
+    )
+    result = js.reconcile(_exit_3_job(tmp_output_dir, log=before + log.encode()))
+    assert result.model_dump().get("skipped_subjects") == ["sub-01_ses-1", "sub-02", "sub-03"]
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("log", ["", "Running command:\n", LOST_SIDE_LINE], ids=["empty", "unrelated", "lost_side"])
+def test_reconcile_rc_3_without_summary_line_lists_no_subject(tmp_output_dir, log):
+    """REQ-MCPJOBS-BDRABCZUK-D43F636F6079: no line naming skipped subjects: partial, with an empty list."""
+    dumped = js.reconcile(_exit_3_job(tmp_output_dir, log=log)).model_dump()
+    assert dumped.get("outcome") == "partial"
+    assert dumped.get("skipped_subjects") == []
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("kind", ["missing", "directory"])
+def test_reconcile_rc_3_with_unreadable_log_lists_no_subject(tmp_output_dir, kind):
+    """REQ-MCPJOBS-BDRABCZUK-3E77CF926916: an unreadable job log leaves the job partial, with an empty list."""
+    state = _exit_3_job(tmp_output_dir)
+    if kind == "directory":
+        Path(state.log_path).mkdir()
+    dumped = js.reconcile(state).model_dump()
+    assert dumped.get("outcome") == "partial"
+    assert dumped.get("skipped_subjects") == []
+
+
+@pytest.mark.unit
+@linux_only
+@pytest.mark.parametrize("stage", [stage for stage in ALL_STAGES if stage != "cortical_tiles"])
+def test_reconcile_rc_3_of_other_stage_lists_no_subject(tmp_output_dir, stage):
+    """REQ-MCPJOBS-BDRABCZUK-E3B874F45AC3: only a cortical_tiles job reads skipped subjects from its log."""
+    log = _summary_line("L", "generate_crops", ["sub-01"])
+    dumped = js.reconcile(_exit_3_job(tmp_output_dir, stage=stage, log=log)).model_dump()
+    assert dumped.get("outcome") == "partial"
+    assert dumped.get("skipped_subjects") == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["lost", "failed", "PARTIAL", ""])
+def test_record_rejects_unknown_outcome(tmp_output_dir, bad):
+    """REQ-MCPJOBS-BDRABCZUK-EE27D7F781B2: outcome is None or partial."""
+    with pytest.raises(ValidationError):
+        _running(tmp_output_dir, outcome=bad)
+
+
+@pytest.mark.unit
+def test_read_job_without_outcome_keys(tmp_output_dir):
+    """REQ-MCPJOBS-BDRABCZUK-8275FF99F8AE: a record written before the two keys existed stays readable."""
+    state = _running(tmp_output_dir, status="succeeded")
+    record = json.loads(state.model_dump_json())
+    record.pop("outcome", None)
+    record.pop("skipped_subjects", None)
+    js.job_path(str(tmp_output_dir), state.job_id).write_text(json.dumps(record))
+    dumped = read_job(str(tmp_output_dir), state.job_id).model_dump()
+    assert dumped.get("outcome", "absent") is None
+    assert dumped.get("skipped_subjects") == []
 
 
 # REQ #13: dead pid without rc -> failed (not a new status)

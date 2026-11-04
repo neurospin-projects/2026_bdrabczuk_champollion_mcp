@@ -360,6 +360,7 @@ async def _execute_pipeline(
     **kwargs,
 ) -> None:
     total = len(active_stages)
+    is_partial = False
     for i, stage_name in enumerate(active_stages):
         if not _umbrella_running(output_dir, umbrella_job_id):
             return
@@ -374,23 +375,38 @@ async def _execute_pipeline(
                 output_dir, umbrella_job_id, status="failed", error=f"Stage {stage_name!r} failed to launch: {e}"
             )
             return
-        status = await _await_child(output_dir, umbrella_job_id, stage_name, result)
-        if status is None:
+        child = await _await_child(output_dir, umbrella_job_id, stage_name, result)
+        if child is None:
             return
-        if status != "succeeded":
-            error = f"Stage {stage_name!r} failed (child job {result['job_id']}). Status: {status}."
+        if child.status != "succeeded":
+            error = f"Stage {stage_name!r} failed (child job {result['job_id']}). Status: {child.status}."
             await _finish(output_dir, umbrella_job_id, status="failed", error=error)
             return
+        await _carry_skipped_subjects(output_dir, umbrella_job_id, child)
+        is_partial = is_partial or child.outcome == job_store.OUTCOME_PARTIAL
         checks = _post_run_checks(stage_name, output_dir, kwargs)
         if not await _files_ok(output_dir, umbrella_job_id, checks, f"Stage {stage_name!r} output missing:"):
             return
     await _finish(
-        output_dir, umbrella_job_id, status="succeeded", progress={"stages_done": total, "stages_total": total}
+        output_dir,
+        umbrella_job_id,
+        status="succeeded",
+        outcome=job_store.OUTCOME_PARTIAL if is_partial else None,
+        progress={"stages_done": total, "stages_total": total},
     )
 
 
-async def _await_child(output_dir: str, umbrella_job_id: str, stage_name: str, result: dict) -> str | None:
-    """Final status of the stage's child job, or None when the chain must stop (umbrella ended or child gone)."""
+async def _carry_skipped_subjects(output_dir: str, umbrella_job_id: str, child: JobState) -> None:
+    """Write a partial cortical_tiles child's skipped_subjects to the umbrella job, whatever the umbrella's status.
+
+    The one umbrella write not guarded by _while_running: it touches no status, so a cancel is never overwritten.
+    """
+    if child.stage == job_store.CORTICAL_TILES_STAGE and child.outcome == job_store.OUTCOME_PARTIAL:
+        await job_store.update_job(output_dir, umbrella_job_id, skipped_subjects=child.skipped_subjects)
+
+
+async def _await_child(output_dir: str, umbrella_job_id: str, stage_name: str, result: dict) -> JobState | None:
+    """Final record of the stage's child job, or None when the chain must stop (umbrella ended or child gone)."""
     child_id = result["job_id"]
     child_output_dir = result["output_dir"]  # use child's actual output_dir for polling
     await _progress(output_dir, umbrella_job_id, current_stage=stage_name, current_child_job_id=child_id)
@@ -403,7 +419,7 @@ async def _await_child(output_dir: str, umbrella_job_id: str, stage_name: str, r
             await _finish(output_dir, umbrella_job_id, status="failed", error=error)
             return None
         if child.status in ("succeeded", "failed", "cancelled"):
-            return child.status
+            return child
         if not _umbrella_running(output_dir, umbrella_job_id):
             # Propagate cancellation
             try:

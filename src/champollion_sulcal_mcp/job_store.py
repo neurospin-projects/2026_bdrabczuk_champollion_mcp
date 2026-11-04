@@ -26,6 +26,12 @@ _RC_MAX_BYTES = 64
 _RC_LIMIT = 255
 BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 ERROR_PROCESS_GONE = "process gone without exit code (server exited or process killed); see log"
+PARTIAL_EXIT_CODE = 3
+OUTCOME_PARTIAL = "partial"
+CORTICAL_TILES_STAGE = "cortical_tiles"
+# Mirrors cortical_tiles generate_sulcal_regions.py log_run_summary; group 1 is the ", "-joined subject names.
+RUN_SUMMARY_RE = re.compile(r"Run summary: side \S+, step \S+: \d+ skipped subject\(s\): (.*?); causes:")
+_TERMINAL_FIELDS = ("status", "returncode", "error", "ended_at", "outcome", "skipped_subjects")
 
 
 def validate_job_id(job_id: object) -> str:
@@ -62,6 +68,8 @@ class JobState(BaseModel):
     progress: JobProgress = Field(default_factory=JobProgress)
     args: dict = Field(default_factory=dict)
     error: str | None = None
+    outcome: Literal["partial"] | None = None
+    skipped_subjects: list[str] = Field(default_factory=list)
 
     @field_validator("job_id")
     @classmethod
@@ -227,16 +235,45 @@ def _launched_elsewhere(state: JobState) -> bool:
     return False
 
 
-def rc_outcome(returncode: int, *, now: str) -> dict:
-    """Terminal job fields for an exit code."""
+def exit_error(returncode: int) -> str | None:
+    """Error text of an exit code; None for 0."""
     if returncode == 0:
-        return {"status": "succeeded", "returncode": 0, "error": None, "ended_at": now}
+        return None
+    return f"Process exited with code {returncode}. See log for details."
+
+
+def rc_outcome(returncode: int, *, now: str) -> dict:
+    """Terminal job fields for an exit code: 0 succeeded, PARTIAL_EXIT_CODE succeeded and partial, others failed."""
+    if returncode in (0, PARTIAL_EXIT_CODE):
+        outcome = OUTCOME_PARTIAL if returncode == PARTIAL_EXIT_CODE else None
+        return {"status": "succeeded", "returncode": returncode, "error": None, "ended_at": now, "outcome": outcome}
     return {
         "status": "failed",
         "returncode": returncode,
-        "error": f"Process exited with code {returncode}. See log for details.",
+        "error": exit_error(returncode),
         "ended_at": now,
+        "outcome": None,
     }
+
+
+def skipped_subjects_from_log(log_path: str) -> list[str]:
+    """Sorted distinct subjects named by the job log's run-summary lines; [] when the log cannot be read."""
+    names: set[str] = set()
+    try:
+        with Path(log_path).open(encoding="utf-8", errors="replace") as log:
+            for line in log:
+                match = RUN_SUMMARY_RE.search(line)
+                if match:
+                    names.update(name for name in match.group(1).split(", ") if name)
+    except (OSError, ValueError) as error:
+        logger.warning("Cannot read skipped subjects from %s: %s", log_path, error)
+        return []
+    return sorted(names)
+
+
+def terminal_fields(state: JobState) -> dict:
+    """The fields a writer copies from a reconciled job into its record."""
+    return {name: getattr(state, name) for name in _TERMINAL_FIELDS}
 
 
 def reconcile(state: JobState) -> JobState:
@@ -256,7 +293,11 @@ def reconcile(state: JobState) -> JobState:
             }
         )
     if rc is not None:
-        return state.model_copy(update=rc_outcome(rc, now=now))
+        update = rc_outcome(rc, now=now)
+        if rc == PARTIAL_EXIT_CODE:
+            cortical_tiles = state.stage == CORTICAL_TILES_STAGE
+            update["skipped_subjects"] = skipped_subjects_from_log(state.log_path) if cortical_tiles else []
+        return state.model_copy(update=update)
     if _launched_elsewhere(state):
         return state
     if state.pid is None:

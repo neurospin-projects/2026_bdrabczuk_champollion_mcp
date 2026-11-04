@@ -18,14 +18,15 @@ from .job_store import (
     JobState,
     current_boot_id,
     current_host,
+    exit_error,
     jobs_dir,
     log_path_for,
     process_start_time,
-    rc_outcome,
     read_job,
     read_rc,
     reconcile,
     release_lock,
+    terminal_fields,
     update_job,
     update_job_with,
     write_job,
@@ -175,12 +176,7 @@ def _final_fields(state: JobState) -> dict | None:
         result = reconcile(state)
         if result.status == "running":
             return None  # liveness not provable: left to reconcile-on-read
-        return {
-            "status": result.status,
-            "returncode": result.returncode,
-            "error": result.error,
-            "ended_at": result.ended_at,
-        }
+        return terminal_fields(result)
     if state.status == "cancelled" and state.ended_at is None:
         try:
             rc = read_rc(state.output_dir, state.job_id)
@@ -189,7 +185,7 @@ def _final_fields(state: JobState) -> dict | None:
         return {
             "returncode": rc,
             "ended_at": now,
-            "error": rc_outcome(rc, now=now)["error"] if rc is not None else ERROR_PROCESS_GONE,
+            "error": exit_error(rc) if rc is not None else ERROR_PROCESS_GONE,
         }
     return None
 
