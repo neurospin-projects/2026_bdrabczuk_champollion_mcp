@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   without exit code".
 - `cancel_job` signals the job's process group: SIGTERM, then SIGKILL to the surviving processes after a grace
   period.
+- A stage that exits with code 3 ends its job `succeeded` with `outcome` `partial` instead of `failed`. Other
+  nonzero exit codes still fail the job. `start_pipeline` continues the chain after a partial stage and ends
+  `succeeded` with `outcome` `partial` when every stage succeeded and at least one was partial.
+  A cancelled job keeps status `cancelled` whatever its exit code.
+
+### Added
+
+- Job records carry two new public fields: `outcome` (`partial` or null) and `skipped_subjects` (the subjects a
+  `cortical_tiles` run summary names; a pipeline job keeps them from its partial `cortical_tiles` stage).
 
 ## [0.1.0] - 2026-10-19
 
