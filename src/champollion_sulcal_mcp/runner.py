@@ -16,6 +16,8 @@ from pathlib import Path
 from .job_store import (
     ERROR_PROCESS_GONE,
     JobState,
+    current_boot_id,
+    current_host,
     jobs_dir,
     log_path_for,
     process_start_time,
@@ -109,6 +111,8 @@ async def launch(
         output_dir=output_dir,
         log_path=str(log_path_for(output_dir, job_id)),
         args=args_snapshot,
+        host=current_host(),
+        boot_id=current_boot_id(),
     )
     # The env (HF_TOKEN included) only travels through the handshake pipe, never the record, log or argv.
     payload = json.dumps({"argv": argv, "env": env}).encode()

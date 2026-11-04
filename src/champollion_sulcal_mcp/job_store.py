@@ -6,6 +6,7 @@ import fcntl
 import logging
 import os
 import re
+import socket
 import stat
 import tempfile
 import uuid
@@ -23,6 +24,7 @@ JOB_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _RC_RE = re.compile(r"-?[0-9]{1,3}")
 _RC_MAX_BYTES = 64
 _RC_LIMIT = 255
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 ERROR_PROCESS_GONE = "process gone without exit code (server exited or process killed); see log"
 
 
@@ -50,6 +52,8 @@ class JobState(BaseModel):
     pid: int | None = Field(None, ge=1, strict=True)
     pgid: int | None = Field(None, ge=1, strict=True)
     pid_start_time: int | None = Field(None, ge=0, strict=True)
+    host: str | None = Field(None, strict=True)
+    boot_id: str | None = Field(None, strict=True)
     output_dir: str
     log_path: str
     started_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -181,6 +185,48 @@ def process_start_time(pid: int) -> int | None:
         raise ValueError(f"malformed /proc/{pid}/stat") from None
 
 
+def current_host() -> str:
+    """Host name of this process (socket.gethostname()), read at each call."""
+    return socket.gethostname()
+
+
+def current_boot_id() -> str | None:
+    """Kernel boot id of this machine, read at each call; None when it cannot be read."""
+    try:
+        return Path(BOOT_ID_PATH).read_text().strip()
+    except OSError:
+        return None
+
+
+def _launched_elsewhere(state: JobState) -> bool:
+    """True when the record names another host or boot, so the local /proc says nothing about its process.
+
+    A field absent from the record (legacy) is never compared. One warning per call; the host check comes first.
+    """
+    if state.host is not None:
+        host = current_host()
+        if state.host != host:
+            logger.warning(
+                "Job %s was recorded on host %s, this server runs on %s: liveness not checked, record left running",
+                state.job_id,
+                state.host,
+                host,
+            )
+            return True
+    if state.boot_id is not None:
+        boot_id = current_boot_id()
+        if state.boot_id != boot_id:
+            logger.warning(
+                "Job %s was recorded under boot id %s, current boot id is %s: "
+                "liveness not checked, record left running",
+                state.job_id,
+                state.boot_id,
+                boot_id,
+            )
+            return True
+    return False
+
+
 def rc_outcome(returncode: int, *, now: str) -> dict:
     """Terminal job fields for an exit code."""
     if returncode == 0:
@@ -211,6 +257,8 @@ def reconcile(state: JobState) -> JobState:
         )
     if rc is not None:
         return state.model_copy(update=rc_outcome(rc, now=now))
+    if _launched_elsewhere(state):
+        return state
     if state.pid is None:
         return state
     try:

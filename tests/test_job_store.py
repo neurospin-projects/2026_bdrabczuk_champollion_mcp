@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
+import socket
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -431,3 +434,124 @@ def test_reconcile_writes_nothing(tmp_output_dir, rc_content):
     before = _snapshot(tmp_output_dir)
     js.reconcile(state)
     assert _snapshot(tmp_output_dir) == before
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-0DDDE42A965C: host and boot id on the record; reconcile guard ---
+# Records carry the host name and the boot id of the launch; reconcile probes the local /proc only
+# when both match the current ones. The current values are the real ones of this test process.
+
+FOREIGN_HOST = "other-host.invalid"
+OTHER_BOOT = "00000000-0000-4000-8000-000000000000"
+
+
+def _current_boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
+def _job_store_warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == js.logger.name and r.levelno == logging.WARNING]
+
+
+# REQ-MCPJOBS-BDRABCZUK-F74963C2850E: host and boot_id survive write_job + read_job
+@pytest.mark.unit
+def test_record_roundtrips_host_and_boot_id(tmp_output_dir):
+    state = _running(tmp_output_dir, pid=4242, host="node-a.example", boot_id=OTHER_BOOT)
+    write_job(state)
+    loaded = read_job(str(tmp_output_dir), state.job_id).model_dump()
+    assert loaded.get("host") == "node-a.example"
+    assert loaded.get("boot_id") == OTHER_BOOT
+
+
+# REQ-MCPJOBS-BDRABCZUK-61037DA49688: a legacy record without the fields reads them as None
+@pytest.mark.unit
+def test_legacy_record_reads_host_and_boot_id_none(tmp_output_dir):
+    state = _running(tmp_output_dir, pid=4242)
+    raw = state.model_dump(mode="json")
+    raw.pop("host", None)
+    raw.pop("boot_id", None)
+    js.job_path(str(tmp_output_dir), state.job_id).write_text(json.dumps(raw))
+    loaded = read_job(str(tmp_output_dir), state.job_id).model_dump()
+    assert "host" in loaded and loaded["host"] is None
+    assert "boot_id" in loaded and loaded["boot_id"] is None
+
+
+# REQ-MCPJOBS-BDRABCZUK-0B2428B9C153: foreign host, no .rc -> unchanged
+@pytest.mark.unit
+@linux_only
+def test_reconcile_foreign_host_unchanged(tmp_output_dir):
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1, host=FOREIGN_HOST, boot_id=_current_boot_id())
+    assert js.reconcile(state) == state
+
+
+# REQ-MCPJOBS-BDRABCZUK-05979502429A: other boot, no .rc -> unchanged
+@pytest.mark.unit
+@linux_only
+def test_reconcile_other_boot_unchanged(tmp_output_dir):
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1, host=socket.gethostname(), boot_id=OTHER_BOOT)
+    assert js.reconcile(state) == state
+
+
+# REQ-MCPJOBS-BDRABCZUK-A61BAA7660BE: foreign host -> process_start_time never called
+@pytest.mark.unit
+@linux_only
+def test_reconcile_foreign_host_skips_proc_probe(tmp_output_dir, monkeypatch):
+    calls = []
+    monkeypatch.setattr(js, "process_start_time", lambda pid: calls.append(pid))
+    pid = os.getpid()
+    state = _running(tmp_output_dir, pid=pid, pid_start_time=1, host=FOREIGN_HOST, boot_id=_current_boot_id())
+    js.reconcile(state)
+    assert calls == []
+
+
+# REQ-MCPJOBS-BDRABCZUK-89DD6A88FD4C: other boot -> process_start_time never called
+@pytest.mark.unit
+@linux_only
+def test_reconcile_other_boot_skips_proc_probe(tmp_output_dir, monkeypatch):
+    calls = []
+    monkeypatch.setattr(js, "process_start_time", lambda pid: calls.append(pid))
+    pid = os.getpid()
+    state = _running(tmp_output_dir, pid=pid, pid_start_time=1, host=socket.gethostname(), boot_id=OTHER_BOOT)
+    js.reconcile(state)
+    assert calls == []
+
+
+# REQ-MCPJOBS-BDRABCZUK-DD534F69B54E: foreign host -> one warning naming job, recorded and current host
+@pytest.mark.unit
+@linux_only
+def test_reconcile_foreign_host_logs_one_warning(tmp_output_dir, caplog):
+    caplog.set_level(logging.WARNING, logger=js.logger.name)
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1, host=FOREIGN_HOST, boot_id=_current_boot_id())
+    js.reconcile(state)
+    warnings = _job_store_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert state.job_id in warnings[0]
+    assert FOREIGN_HOST in warnings[0]
+    assert socket.gethostname() in warnings[0]
+
+
+# REQ-MCPJOBS-BDRABCZUK-B49E30CF1C4A: same host, other boot -> one warning naming job, recorded and current boot id
+@pytest.mark.unit
+@linux_only
+def test_reconcile_other_boot_logs_one_warning(tmp_output_dir, caplog):
+    caplog.set_level(logging.WARNING, logger=js.logger.name)
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1, host=socket.gethostname(), boot_id=OTHER_BOOT)
+    js.reconcile(state)
+    warnings = _job_store_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert state.job_id in warnings[0]
+    assert OTHER_BOOT in warnings[0]
+    assert _current_boot_id() in warnings[0]
+
+
+# REQ-MCPJOBS-BDRABCZUK-6C1F80F835B0: same host and boot, dead pid, no .rc -> failed copy of the job
+@pytest.mark.unit
+@linux_only
+def test_reconcile_same_host_and_boot_dead_pid_fails(tmp_output_dir):
+    host, boot = socket.gethostname(), _current_boot_id()
+    state = _running(tmp_output_dir, pid=_dead_pid(), pid_start_time=1, host=host, boot_id=boot)
+    result = js.reconcile(state)
+    assert result.status == "failed"
+    assert GONE in (result.error or "")
+    copied = result.model_dump()
+    assert copied.get("host") == host
+    assert copied.get("boot_id") == boot
