@@ -23,12 +23,7 @@ async def _reconciled(output_dir: str, state: JobState) -> JobState:
         fresh = job_store.reconcile(cur)  # an .rc written since the first read wins over "process gone"
         if fresh.status == "running":
             return None
-        return {
-            "status": fresh.status,
-            "returncode": fresh.returncode,
-            "error": fresh.error,
-            "ended_at": fresh.ended_at,
-        }
+        return job_store.terminal_fields(fresh)
 
     return await job_store.update_job_with(output_dir, state.job_id, decide)
 
@@ -45,7 +40,13 @@ async def _reconciled_or_stored(output_dir: str, job_id: str, state: JobState) -
 
 
 async def get_job_status(output_dir: str, job_id: str, ctx: Context | None = None) -> dict:
-    """Get the current status and progress of a running or completed job."""
+    """Get the current status and progress of a running or completed job.
+
+    A stage that exits 3 reads status ``succeeded`` with ``outcome`` ``partial``: it ran, but left some subjects out.
+    A pipeline job reads the same when every stage succeeded and at least one was partial. ``outcome`` is None
+    otherwise. ``skipped_subjects`` lists the subjects a cortical_tiles run summary names, on the stage's job and
+    on its pipeline job.
+    """
     try:
         state = job_store.read_job(output_dir, job_id)
     except FileNotFoundError:

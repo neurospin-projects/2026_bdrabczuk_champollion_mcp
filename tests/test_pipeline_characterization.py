@@ -7,6 +7,7 @@ persists a child job per stage; the 2 s child-poll sleep is shortened.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,14 @@ from fastmcp.exceptions import ToolError
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.job_store import JobState, write_job
 from champollion_sulcal_mcp.tools import pipeline
-from tests.stage_files import install_fake_stages, launch_reply, seed_stage_files
+from tests.stage_files import MASKS, install_fake_stages, launch_reply, seed_stage_files
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("in_process_driver")]
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 TERMINAL = ("succeeded", "failed", "cancelled")
+SKIPPED = ["sub-01", "sub-02"]
+PARTIAL_WITH_SKIPS = {"outcome": "partial", "skipped_subjects": SKIPPED}
 
 _real_sleep = asyncio.sleep
 
@@ -84,6 +87,38 @@ def poll_hooks(monkeypatch):
 
     monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
     return hooks
+
+
+@pytest.fixture
+def child_cancels(monkeypatch):
+    """Replace runner.cancel with a recorder of its (output_dir, job_id) calls."""
+    cancelled: list[tuple[str, str]] = []
+
+    async def fake_cancel(output_dir, job_id):
+        cancelled.append((output_dir, job_id))
+
+    monkeypatch.setattr(pipeline.runner, "cancel", fake_cancel)
+    return cancelled
+
+
+def _cancel_umbrella_when(ready, output_dir: Path, job_id: str):
+    """A poll hook writing the umbrella job as cancelled once `ready()` is true."""
+
+    def hook():
+        if ready():
+            umbrella = job_store.read_job(str(output_dir), job_id)
+            write_job(umbrella.model_copy(update={"status": "cancelled"}))
+
+    return hook
+
+
+async def _until_child_cancelled(cancelled: list) -> None:
+    """Wait in real time: the pre-launch file checks run in a worker thread, not in event-loop turns."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while not cancelled and loop.time() < deadline:
+        await _real_sleep(0.01)
+    await _settle()
 
 
 async def _wait_terminal(output_dir: Path, job_id: str, timeout: float = 5.0) -> JobState:
@@ -187,30 +222,14 @@ class TestUmbrellaOutcome:
 
     # --- REQ-MCP-COV-31 ---
 
-    async def test_umbrella_cancel_cancels_child(self, tmp_path, fake_stages, poll_hooks, monkeypatch):
+    async def test_umbrella_cancel_cancels_child(self, tmp_path, fake_stages, poll_hooks, child_cancels):
         """REQ-MCP-COV-31: cancelling the umbrella cancels the running child; no later stage."""
         fake_stages.outcome["morphologist"] = "running"
-        cancelled: list[tuple[str, str]] = []
-
-        async def fake_cancel(output_dir, job_id):
-            cancelled.append((output_dir, job_id))
-
-        monkeypatch.setattr(pipeline.runner, "cancel", fake_cancel)
         out = tmp_path / "ds"
         result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
-
-        def cancel_umbrella():
-            umbrella = job_store.read_job(str(out), result["job_id"])
-            write_job(umbrella.model_copy(update={"status": "cancelled"}))
-
-        poll_hooks.append(cancel_umbrella)
-        # Wait in real time: the pre-launch file checks run in a worker thread, not in event-loop turns.
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + 5.0
-        while not cancelled and loop.time() < deadline:
-            await _real_sleep(0.01)
-        await _settle()
-        assert cancelled == [(str(fake_stages.child_dir), fake_stages.children["morphologist"])]
+        poll_hooks.append(_cancel_umbrella_when(lambda: True, out, result["job_id"]))
+        await _until_child_cancelled(child_cancels)
+        assert child_cancels == [(str(fake_stages.child_dir), fake_stages.children["morphologist"])]
         assert fake_stages.launched == ["morphologist"]
 
     # --- REQ-MCP-COV-32 ---
@@ -239,6 +258,11 @@ class TestUmbrellaOutcome:
 # --- TASK-MCPJOBS-BDRABCZUK-3B8937480E8F: a partial stage (exit 3) in the chain ---
 
 
+def _outcome_and_skips(umbrella: JobState) -> tuple:
+    dumped = umbrella.model_dump()
+    return dumped.get("outcome", "absent"), dumped.get("skipped_subjects")
+
+
 class TestPartialStage:
     @pytest.mark.parametrize("partial", [["cortical_tiles"], ["snapshots"], ["config", "combine"]], ids="+".join)
     async def test_partial_stage_makes_umbrella_partial(self, tmp_path, fake_stages, poll_hooks, partial):
@@ -263,15 +287,18 @@ class TestPartialStage:
 
     async def test_umbrella_carries_cortical_tiles_skipped_subjects(self, tmp_path, fake_stages, poll_hooks):
         """REQ-MCPJOBS-BDRABCZUK-7C0A1132AE7C: the umbrella holds the cortical_tiles child's skipped_subjects."""
-        fake_stages.fields["cortical_tiles"] = {"outcome": "partial", "skipped_subjects": ["sub-01", "sub-02"]}
+        fake_stages.fields["cortical_tiles"] = PARTIAL_WITH_SKIPS
         out = tmp_path / "ds"
         result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
         umbrella = await _wait_terminal(out, result["job_id"])
-        assert umbrella.model_dump().get("skipped_subjects") == ["sub-01", "sub-02"]
+        assert umbrella.model_dump().get("skipped_subjects") == SKIPPED
 
     async def test_failed_stage_after_partial_stage_fails_umbrella(self, tmp_path, fake_stages, poll_hooks):
-        """REQ-MCPJOBS-BDRABCZUK-5CBAB28A60E7: a later failed stage wins: umbrella failed, outcome None."""
-        fake_stages.fields["cortical_tiles"] = {"outcome": "partial"}
+        """REQ-MCPJOBS-BDRABCZUK-5CBAB28A60E7: a later failed stage wins: umbrella failed, outcome None.
+
+        REQ-MCPJOBS-BDRABCZUK-7C0A1132AE7C: the skipped subjects stay on the umbrella.
+        """
+        fake_stages.fields["cortical_tiles"] = PARTIAL_WITH_SKIPS
         fake_stages.outcome["embeddings"] = "failed"
         out = tmp_path / "ds"
         result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
@@ -279,7 +306,81 @@ class TestPartialStage:
         assert umbrella.status == "failed"
         assert "embeddings" in umbrella.error
         assert fake_stages.launched == ALL_STAGES[: ALL_STAGES.index("embeddings") + 1]
-        assert umbrella.model_dump().get("outcome", "absent") is None
+        assert _outcome_and_skips(umbrella) == (None, SKIPPED)
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-3B8937480E8F: the umbrella ends on another path after a partial stage ---
+
+
+def _version_dir(kwargs: dict) -> Path:
+    return Path(kwargs["datasets_root"]) / "derivatives" / "champollion_V1" / MASKS
+
+
+def _cancel_config_child(fake_stages, kwargs: dict) -> None:
+    fake_stages.outcome["config"] = "cancelled"
+
+
+def _refuse_embeddings_launch(fake_stages, kwargs: dict) -> None:
+    fake_stages.outcome["embeddings"] = ToolError("models_path must be an absolute path")
+
+
+def _remove_snapshots_input(fake_stages, kwargs: dict) -> None:
+    shutil.rmtree(_version_dir(kwargs) / "embeddings")
+
+
+def _remove_snapshots_output(fake_stages, kwargs: dict) -> None:
+    shutil.rmtree(_version_dir(kwargs) / "snapshots")
+
+
+def _crash_at_embeddings(fake_stages, kwargs: dict) -> None:
+    fake_stages.outcome["embeddings"] = RuntimeError("boom")
+
+
+def _lose_embeddings_child_file(fake_stages, kwargs: dict) -> None:
+    fake_stages.outcome["embeddings"] = "missing"
+
+
+class TestEndAfterPartialStage:
+    """Only a run whose every stage succeeded is partial; REQ-MCPJOBS-BDRABCZUK-7C0A1132AE7C keeps the skips."""
+
+    @pytest.mark.parametrize(
+        ("break_run", "error"),
+        [
+            pytest.param(_cancel_config_child, "Status: cancelled", id="child_cancelled"),
+            pytest.param(_refuse_embeddings_launch, "failed to launch", id="launch_error"),
+            pytest.param(_remove_snapshots_input, "not started: missing", id="input_missing"),
+            pytest.param(_remove_snapshots_output, "output missing:", id="output_missing"),
+            pytest.param(_crash_at_embeddings, "Pipeline crashed:", id="crash"),
+            pytest.param(_lose_embeddings_child_file, "disappeared unexpectedly", id="child_file_gone"),
+        ],
+    )
+    async def test_umbrella_failed_after_partial_stage(self, tmp_path, fake_stages, poll_hooks, break_run, error):
+        """REQ-MCPJOBS-BDRABCZUK-4127619379F9 (child_cancelled), -42ED90D66529 (launch_error),
+        -610480927E9F (input_missing), -6AA47C97DDC7 (output_missing), -5508ED15743D (crash),
+        -5AA39FF5DDDC (child_file_gone): the umbrella ends failed with outcome None.
+        """
+        fake_stages.fields["cortical_tiles"] = PARTIAL_WITH_SKIPS
+        out = tmp_path / "ds"
+        kwargs = _pipeline_kwargs(out)
+        break_run(fake_stages, kwargs)
+        result = await pipeline.start_pipeline(**kwargs)
+        umbrella = await _wait_terminal(out, result["job_id"])
+        assert umbrella.status == "failed"
+        assert error in umbrella.error
+        assert _outcome_and_skips(umbrella) == (None, SKIPPED)
+
+    async def test_umbrella_cancelled_after_partial_stage(self, tmp_path, fake_stages, poll_hooks, child_cancels):
+        """REQ-MCPJOBS-BDRABCZUK-4E0AB7D15BF1: a cancelled umbrella stays cancelled, with outcome None."""
+        fake_stages.fields["cortical_tiles"] = PARTIAL_WITH_SKIPS
+        fake_stages.outcome["config"] = "running"
+        out = tmp_path / "ds"
+        result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
+        poll_hooks.append(_cancel_umbrella_when(lambda: "config" in fake_stages.launched, out, result["job_id"]))
+        await _until_child_cancelled(child_cancels)
+        umbrella = job_store.read_job(str(out), result["job_id"])
+        assert child_cancels == [(str(fake_stages.child_dir), fake_stages.children["config"])]
+        assert umbrella.status == "cancelled"
+        assert _outcome_and_skips(umbrella) == (None, SKIPPED)
 
 
 # --- REQ-MCP-COV-34: config stage wiring ---
