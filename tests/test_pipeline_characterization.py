@@ -45,12 +45,13 @@ class FakeStages:
 
     `outcome[stage]` is the child's status at launch ("succeeded" by default),
     "missing" to launch without persisting a child job file, or an exception
-    instance to raise at launch.
+    instance to raise at launch. `fields[stage]` holds further fields of the child's record.
     """
 
     def __init__(self, child_dir: Path):
         self.child_dir = child_dir
         self.outcome: dict[str, object] = {}
+        self.fields: dict[str, dict] = {}
         self.launched: list[str] = []
         self.children: dict[str, str] = {}
 
@@ -61,7 +62,7 @@ class FakeStages:
         self.launched.append(stage_name)
         child = JobState(stage=stage_name, status="running", output_dir=str(self.child_dir), log_path="/tmp/x.log")
         if outcome != "missing":
-            write_job(child.model_copy(update={"status": outcome}))
+            write_job(child.model_copy(update={"status": outcome, **self.fields.get(stage_name, {})}))
         self.children[stage_name] = child.job_id
         return launch_reply(child.job_id, stage_name, self.child_dir)
 
@@ -233,6 +234,52 @@ class TestUmbrellaOutcome:
         umbrella = await _wait_terminal(out, result["job_id"])
         assert umbrella.status == "failed"
         assert umbrella.error.startswith("Pipeline crashed:")
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-3B8937480E8F: a partial stage (exit 3) in the chain ---
+
+
+class TestPartialStage:
+    @pytest.mark.parametrize("partial", [["cortical_tiles"], ["snapshots"], ["config", "combine"]], ids="+".join)
+    async def test_partial_stage_makes_umbrella_partial(self, tmp_path, fake_stages, poll_hooks, partial):
+        """REQ-MCPJOBS-BDRABCZUK-7DE7850CB076: every stage runs, the umbrella ends succeeded with outcome partial."""
+        for stage in partial:
+            fake_stages.fields[stage] = {"outcome": "partial"}
+        out = tmp_path / "ds"
+        result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
+        umbrella = await _wait_terminal(out, result["job_id"])
+        assert fake_stages.launched == ALL_STAGES
+        assert umbrella.status == "succeeded"
+        assert umbrella.progress.stages_done == umbrella.progress.stages_total == len(ALL_STAGES)
+        assert umbrella.model_dump().get("outcome") == "partial"
+
+    async def test_no_partial_stage_leaves_umbrella_outcome_none(self, tmp_path, fake_stages, poll_hooks):
+        """REQ-MCPJOBS-BDRABCZUK-DAD4E46768C3: with no partial child the umbrella outcome is None."""
+        out = tmp_path / "ds"
+        result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
+        umbrella = await _wait_terminal(out, result["job_id"])
+        assert umbrella.status == "succeeded"
+        assert umbrella.model_dump().get("outcome", "absent") is None
+
+    async def test_umbrella_carries_cortical_tiles_skipped_subjects(self, tmp_path, fake_stages, poll_hooks):
+        """REQ-MCPJOBS-BDRABCZUK-7C0A1132AE7C: the umbrella holds the cortical_tiles child's skipped_subjects."""
+        fake_stages.fields["cortical_tiles"] = {"outcome": "partial", "skipped_subjects": ["sub-01", "sub-02"]}
+        out = tmp_path / "ds"
+        result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
+        umbrella = await _wait_terminal(out, result["job_id"])
+        assert umbrella.model_dump().get("skipped_subjects") == ["sub-01", "sub-02"]
+
+    async def test_failed_stage_after_partial_stage_fails_umbrella(self, tmp_path, fake_stages, poll_hooks):
+        """REQ-MCPJOBS-BDRABCZUK-5CBAB28A60E7: a later failed stage wins: umbrella failed, outcome None."""
+        fake_stages.fields["cortical_tiles"] = {"outcome": "partial"}
+        fake_stages.outcome["embeddings"] = "failed"
+        out = tmp_path / "ds"
+        result = await pipeline.start_pipeline(**_pipeline_kwargs(out))
+        umbrella = await _wait_terminal(out, result["job_id"])
+        assert umbrella.status == "failed"
+        assert "embeddings" in umbrella.error
+        assert fake_stages.launched == ALL_STAGES[: ALL_STAGES.index("embeddings") + 1]
+        assert umbrella.model_dump().get("outcome", "absent") is None
 
 
 # --- REQ-MCP-COV-34: config stage wiring ---

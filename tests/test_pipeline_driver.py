@@ -56,7 +56,8 @@ STAGE_SCRIPTS = {
 }
 
 # Body of every fake stage script. It reads its mode from <pipeline>/control/<script>.mode:
-# "ok" (default) exits 0, "fail" exits 3, "wait" waits (at most 60 s) for <pipeline>/control/go,
+# "ok" (default) exits 0, "fail" exits 1, "partial" logs a cortical_tiles run summary and exits 3,
+# "wait" waits (at most 60 s) for <pipeline>/control/go,
 # "kill_wrapper" SIGKILLs its parent (the job wrapper) so no exit code is ever written,
 # "delete_record <stage>" / "corrupt_record <stage>" delete / corrupt the running job record of
 # <stage> under <root>/ds, then wait like "wait".
@@ -94,6 +95,15 @@ if kind in ("wait", "delete_record", "corrupt_record"):
     while not (ctl / "go").exists() and time.monotonic() < deadline:
         time.sleep(0.05)
 elif mode == "fail":
+    trace("end")
+    sys.exit(1)
+elif mode == "partial":
+    print(
+        "ERROR:generate_sulcal_regions.py: Run summary: side L, step generate_crops: "
+        "2 skipped subject(s): sub-02, sub-01; causes: ValueError: no graph",
+        file=sys.stderr,
+        flush=True,
+    )
     trace("end")
     sys.exit(3)
 elif mode == "kill_wrapper":
@@ -346,6 +356,33 @@ def test_failed_stage_starts_no_later_stage(chain):
         STAGE_SCRIPTS["morphologist"],
         STAGE_SCRIPTS["cortical_tiles"],
     ]
+
+
+# --- TASK-MCPJOBS-BDRABCZUK-3B8937480E8F: a stage exit 3 is partial, the chain goes on ---
+
+
+@pytest.mark.integration
+def test_partial_stage_exit_3_starts_every_later_stage(chain):
+    """REQ-MCPJOBS-BDRABCZUK-0BBF3790B82D: after a stage exits 3 the chain runs on to the last stage,
+    with the server gone.
+    """
+    chain.mode("cortical_tiles", "partial")
+    job_id = chain.launch_and_exit()
+    umbrella = _wait_umbrella_terminal(chain, job_id)
+    assert [script for event, script in chain.trace() if event == "start"] == list(STAGE_SCRIPTS.values())
+    assert umbrella.status == "succeeded", f"umbrella {umbrella.status}: {umbrella.error}"
+
+
+@pytest.mark.integration
+def test_partial_cortical_tiles_exit_3_reports_skipped_subjects_on_umbrella(chain):
+    """REQ-MCPJOBS-BDRABCZUK-7C0A1132AE7C: a cortical_tiles exit 3 ends the umbrella partial, with the
+    subjects its run summary names, with the server gone.
+    """
+    chain.mode("cortical_tiles", "partial")
+    job_id = chain.launch_and_exit()
+    dumped = _wait_umbrella_terminal(chain, job_id).model_dump()
+    assert dumped.get("outcome") == "partial"
+    assert dumped.get("skipped_subjects") == ["sub-01", "sub-02"]
 
 
 # --- REQ-MCPCOV-BDRABCZUK-199A2F34559F / -E6FADE5EE94F / -733D33D0319F, with the server gone ---
