@@ -34,6 +34,8 @@ Fold {fold_current}/{fold_total} ({percent}%)
 
 ### All jobs
 
+A job keeps running after the MCP server exits, so polling can resume later in a new session with the same `output_dir` and `job_id`.
+
 Show elapsed time if `started_at` is available. Warn if a job has been running more than 2× the expected duration.
 
 ## Terminal States
@@ -42,11 +44,12 @@ Show elapsed time if `started_at` is available. Warn if a job has been running m
 |--------|--------|
 | `succeeded` | Report output locations; suggest sanity checks from `run-pipeline` skill |
 | `failed` | Switch to **debug** skill — call `get_job_log` and diagnose |
+| `failed` with error "process gone without exit code" | The job's process ended without writing an exit code (`returncode` is null); call `get_job_log` to see how far it got before relaunching |
 | `cancelled` | Report cancelled; offer to re-launch |
 
 ## Cancellation
 
-If the user asks to stop a job: call `cancel_job(output_dir, job_id)`. Confirm the final status.
+If the user asks to stop a job: call `cancel_job(output_dir, job_id)`. `cancel_job` signals the job's process group (SIGTERM, then SIGKILL after a grace period), so child processes stop too. Confirm the final status.
 
 ## Listing Jobs
 

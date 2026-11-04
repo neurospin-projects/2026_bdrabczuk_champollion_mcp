@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Jobs run detached from the MCP server: a job keeps running after the MCP server exits, and its exit code is
+  recorded in a file next to the job log.
+- `start_pipeline` runs the start_pipeline stage chain in a detached driver process.
+- `get_job_status`, `list_jobs` and `get_job_log` reconcile a running job with the job's process before answering.
+  A job whose process ended without writing an exit code is reported as `failed` with the error "process gone
+  without exit code".
+- `cancel_job` signals the job's process group: SIGTERM, then SIGKILL to the surviving processes after a grace
+  period.
+
 ## [0.1.0] - 2026-10-19
 
 First public release of the Champollion sulcal MCP server.
