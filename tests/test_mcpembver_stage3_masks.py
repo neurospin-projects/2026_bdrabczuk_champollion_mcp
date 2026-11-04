@@ -26,6 +26,7 @@ import pytest
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.job_store import JobState, write_job
 from champollion_sulcal_mcp.tools import pipeline, stages
+from tests.stage_files import seed_stage_files
 
 pytestmark = pytest.mark.unit
 
@@ -101,6 +102,7 @@ async def _config_call_via_pipeline(base: Path, monkeypatch, **options) -> dict:
     monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
 
     kwargs = _pipeline_kwargs(base)
+    seed_stage_files({**kwargs, **options})
     result = await pipeline.start_pipeline(**kwargs, **options)
 
     loop = asyncio.get_running_loop()

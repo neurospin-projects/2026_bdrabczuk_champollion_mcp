@@ -35,6 +35,7 @@ from champollion_sulcal_mcp.job_store import (
     write_job,
 )
 from champollion_sulcal_mcp.tools import jobs, pipeline
+from tests.stage_files import seed_stage_files
 
 SRC_DIR = str(Path(champollion_sulcal_mcp.__file__).resolve().parent.parent)
 TERMINAL = ("succeeded", "failed", "cancelled")
@@ -113,17 +114,19 @@ LAUNCHER = (
 
 
 def _pipeline_kwargs(out: Path) -> dict:
-    return {
+    kwargs = {
         "input_dir": str(out / "subjects"),
         "output_dir": str(out),
         "path_to_graph": "t1mri/default_acquisition/default_analysis/folds/3.1",
         "path_sk_with_hull": "t1mri/default_acquisition/default_analysis/segmentation",
-        "crop_path": str(out / "crops"),
+        "crop_path": str(out / "DEMO01" / "crops"),
         "dataset": "DEMO01",
         "models_path": str(out / "models"),
         "datasets_root": str(out),
         "log": False,
     }
+    seed_stage_files(kwargs)
+    return kwargs
 
 
 class Chain:

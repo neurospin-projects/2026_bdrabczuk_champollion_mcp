@@ -14,20 +14,17 @@ pipeline script runs.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
 
-from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.tools import pipeline
+from tests.stage_files import stage_argv_via_pipeline
 
 pytestmark = pytest.mark.unit
 
 ALL_STAGES = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 MASKS = "canonical_corrected_26_1"
-
-_real_sleep = asyncio.sleep
 
 
 def _contains_run(argv: list[str], tokens: list[str]) -> bool:
@@ -70,31 +67,9 @@ async def _cortical_tiles_argv_via_pipeline(base: Path, launches: list, monkeypa
     The real _launch_stage and start_cortical_tiles run; runner.launch is the recorder.
     Once the stage is launched its child job is marked succeeded so the umbrella ends.
     """
-
-    async def fast_sleep(delay, *args, **kwargs):
-        await _real_sleep(0)
-
-    monkeypatch.setattr(pipeline.asyncio, "sleep", fast_sleep)
-
-    kwargs = _pipeline_kwargs(base)
-    result = await pipeline.start_pipeline(**kwargs, **options)
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + 5.0
-    while not launches and loop.time() < deadline:
-        await _real_sleep(0.01)
-    assert launches, "cortical_tiles stage was never launched"
+    argv = await stage_argv_via_pipeline("cortical_tiles", _pipeline_kwargs(base), launches, monkeypatch, **options)
     assert launches[0]["stage"] == "cortical_tiles", launches[0]
-
-    child_dir = launches[0]["output_dir"]
-    for job_file in (Path(child_dir) / ".mcp_jobs").glob("*.json"):
-        await job_store.update_job(child_dir, job_file.stem, status="succeeded")
-
-    while loop.time() < deadline:
-        if job_store.read_job(kwargs["output_dir"], result["job_id"]).status in ("succeeded", "failed", "cancelled"):
-            break
-        await _real_sleep(0.01)
-    return launches[0]["argv"]
+    return argv
 
 
 async def test_launch_stage_cortical_tiles_forwards_masks(recording_cortical_tiles):

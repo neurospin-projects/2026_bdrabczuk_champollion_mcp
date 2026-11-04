@@ -15,6 +15,7 @@ from fastmcp.exceptions import ToolError
 from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.job_store import JobState, write_job
 from champollion_sulcal_mcp.tools import pipeline
+from tests.stage_files import install_fake_stages, launch_reply, seed_stage_files
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("in_process_driver")]
 
@@ -25,16 +26,18 @@ _real_sleep = asyncio.sleep
 
 
 def _pipeline_kwargs(output_dir: Path) -> dict:
-    return {
+    kwargs = {
         "input_dir": str(output_dir / "subjects"),
         "output_dir": str(output_dir),
         "path_to_graph": "t1mri/default_acquisition/default_analysis/folds/3.1",
         "path_sk_with_hull": "t1mri/default_acquisition/default_analysis/segmentation",
-        "crop_path": str(output_dir / "crops"),
+        "crop_path": str(output_dir / "DEMO01" / "crops"),
         "dataset": "DEMO01",
         "models_path": str(output_dir / "models"),
         "datasets_root": str(output_dir / "datasets"),
     }
+    seed_stage_files(kwargs)
+    return kwargs
 
 
 class FakeStages:
@@ -60,14 +63,12 @@ class FakeStages:
         if outcome != "missing":
             write_job(child.model_copy(update={"status": outcome}))
         self.children[stage_name] = child.job_id
-        return {"job_id": child.job_id, "status": "running", "stage": stage_name, "output_dir": str(self.child_dir)}
+        return launch_reply(child.job_id, stage_name, self.child_dir)
 
 
 @pytest.fixture
 def fake_stages(tmp_path, monkeypatch):
-    fake = FakeStages(tmp_path / "children")
-    monkeypatch.setattr(pipeline, "_launch_stage", fake)
-    return fake
+    return install_fake_stages(FakeStages, tmp_path, monkeypatch)
 
 
 @pytest.fixture
@@ -202,6 +203,11 @@ class TestUmbrellaOutcome:
             write_job(umbrella.model_copy(update={"status": "cancelled"}))
 
         poll_hooks.append(cancel_umbrella)
+        # Wait in real time: the pre-launch file checks run in a worker thread, not in event-loop turns.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        while not cancelled and loop.time() < deadline:
+            await _real_sleep(0.01)
         await _settle()
         assert cancelled == [(str(fake_stages.child_dir), fake_stages.children["morphologist"])]
         assert fake_stages.launched == ["morphologist"]
