@@ -339,3 +339,36 @@ class TestBuildEnv:
         monkeypatch.setenv("PATH", "/usr/bin")
         await stages.start_morphologist(**_tool_kwargs("start_morphologist", tmp_path))
         assert launches[0]["env"]["PATH"].split(os.pathsep) == [str(brainvisa / "bin"), str(pixi_bin), "/usr/bin"]
+
+    # REQ-MCPENV-BDRABCZUK-C92C44BECCD3: the pipeline pixi env replaces an inherited CONDA_PREFIX
+    # (the pipeline's bin/Xvfb wrapper reads ${CONDA_PREFIX}/share/X11/xkb).
+
+    @pytest.mark.parametrize("tool", ["start_morphologist", "start_embeddings"])
+    async def test_conda_prefix_replaces_inherited(self, pipeline_dir, tmp_path, launches, monkeypatch, tool):
+        """REQ-MCPENV-BDRABCZUK-C92C44BECCD3: a stale inherited CONDA_PREFIX is replaced."""
+        pixi_env = pipeline_dir / ".pixi" / "envs" / "default"
+        pixi_env.mkdir(parents=True)
+        monkeypatch.setenv("CONDA_PREFIX", str(tmp_path / "mcp" / ".pixi" / "envs" / "default"))
+        await getattr(stages, tool)(**_tool_kwargs(tool, tmp_path))
+        assert launches[0]["env"]["CONDA_PREFIX"] == str(pixi_env)
+
+    @pytest.mark.parametrize("tool", ["start_morphologist", "start_embeddings"])
+    async def test_conda_prefix_set_when_unset(self, pipeline_dir, tmp_path, launches, monkeypatch, tool):
+        """REQ-MCPENV-BDRABCZUK-C92C44BECCD3: CONDA_PREFIX is set when the server has none."""
+        pixi_env = pipeline_dir / ".pixi" / "envs" / "default"
+        pixi_env.mkdir(parents=True)
+        monkeypatch.delenv("CONDA_PREFIX", raising=False)
+        await getattr(stages, tool)(**_tool_kwargs(tool, tmp_path))
+        assert launches[0]["env"].get("CONDA_PREFIX") == str(pixi_env)
+
+    @pytest.mark.parametrize("inherited", ["/opt/other/env", None])
+    async def test_conda_prefix_inherited_without_pixi_env(
+        self, pipeline_dir, tmp_path, launches, monkeypatch, inherited
+    ):
+        """REQ-MCPENV-BDRABCZUK-13802AB82160: no pipeline pixi env leaves CONDA_PREFIX as inherited."""
+        if inherited is None:
+            monkeypatch.delenv("CONDA_PREFIX", raising=False)
+        else:
+            monkeypatch.setenv("CONDA_PREFIX", inherited)
+        await stages.start_morphologist(**_tool_kwargs("start_morphologist", tmp_path))
+        assert launches[0]["env"].get("CONDA_PREFIX") == inherited
