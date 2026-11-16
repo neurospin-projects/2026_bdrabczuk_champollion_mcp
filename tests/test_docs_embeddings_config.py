@@ -5,9 +5,9 @@ Reference (champollion_pipeline a41f8cd):
   and ``generate_embeddings.py`` has no ``--config_path``: each model folder
   carries its own ``.hydra/config.yaml``.
 - Stage 4 runs ``champollion_V1/champollion/evaluate.py`` per region; its
-  ``load_model`` does ``glob(<model>/logs/lightning_logs/version_0/checkpoints/*.ckpt)[0]``,
+  ``load_model`` does ``glob(<model>/logs/lightning_logs/version_*/checkpoints/epoch=80-step=*.ckpt)[0]``,
   which raises ``IndexError: list index out of range`` when the model folder has
-  neither a Lightning checkpoint nor ``logs/best_model_weights.pt`` (converted by
+  neither the epoch-80 checkpoint nor ``logs/best_model_weights.pt`` (converted by
   ``_ensure_ckpt``). The ``skeleton_all[0].keys()`` frame belongs to
   ``create_datasets.py`` (training path), not stage 4.
 """
@@ -27,8 +27,9 @@ DOC_DIRS = ("skills", "agents", "docs")
 DOCS = sorted(p for d in DOC_DIRS for p in (REPO_ROOT / d).rglob("*.md")) + [REPO_ROOT / "README.md"]
 
 ERROR_PATTERNS = REPO_ROOT / "skills" / "debug" / "references" / "error-patterns.md"
+AGENT = REPO_ROOT / "agents" / "champollion-pipeline.md"
 
-CKPT_GLOB = "logs/lightning_logs/version_0/checkpoints/"
+CKPT_GLOB = "logs/lightning_logs/version_*/checkpoints/epoch=80-step=*.ckpt"
 WEIGHTS_FILE = "logs/best_model_weights.pt"
 INDEX_ERROR = "IndexError: list index out of range"
 
@@ -57,12 +58,22 @@ def test_doc_does_not_mention_config_path(doc: Path) -> None:
     assert offending == [], f"{doc.relative_to(REPO_ROOT)} still mentions config_path: {offending}"
 
 
-def test_stage4_indexerror_attributed_to_missing_checkpoint() -> None:
-    """The Stage 4 IndexError entry blames a model folder lacking both a .ckpt and best_model_weights.pt."""
+def test_stage4_indexerror_names_epoch80_checkpoint_first() -> None:
+    """The Stage 4 IndexError entry names the epoch-80 checkpoint before best_model_weights.pt."""
     entries = _stage4_entries_with(INDEX_ERROR)
     assert entries, f"Stage 4 section of error-patterns.md has no '{INDEX_ERROR}' entry"
-    assert any(CKPT_GLOB in entry and WEIGHTS_FILE in entry for entry in entries), (
-        f"No Stage 4 '{INDEX_ERROR}' entry names both {CKPT_GLOB} and {WEIGHTS_FILE}: {entries}"
+    assert any(CKPT_GLOB in e and WEIGHTS_FILE in e and e.index(CKPT_GLOB) < e.index(WEIGHTS_FILE) for e in entries), (
+        f"No Stage 4 '{INDEX_ERROR}' entry names {CKPT_GLOB} before {WEIGHTS_FILE}: {entries}"
+    )
+
+
+def test_agent_indexerror_names_epoch80_checkpoint_first() -> None:
+    """The agent's Debug Mode IndexError line names the epoch-80 checkpoint before best_model_weights.pt."""
+    lines = [ln for ln in AGENT.read_text().splitlines() if INDEX_ERROR in ln]
+    assert lines, f"agents/champollion-pipeline.md has no '{INDEX_ERROR}' line"
+    ordered = [ln for ln in lines if CKPT_GLOB in ln and WEIGHTS_FILE in ln]
+    assert any(ln.index(CKPT_GLOB) < ln.index(WEIGHTS_FILE) for ln in ordered), (
+        f"No '{INDEX_ERROR}' line names {CKPT_GLOB} before {WEIGHTS_FILE}: {lines}"
     )
 
 
