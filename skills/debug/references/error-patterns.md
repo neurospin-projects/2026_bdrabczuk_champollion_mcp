@@ -99,10 +99,10 @@ start_config(crop_path=..., dataset=..., external_config="/writable/path/local.y
 IndexError: list index out of range
   weights_path = glob.glob(model_path + '/logs/lightning_logs/version_0/checkpoints/*.ckpt')[0]
 ```
-**Root cause:** `champollion/evaluate.py` `load_model` takes the first match of `<model>/logs/lightning_logs/version_0/checkpoints/*.ckpt`. Before each region, `generate_embeddings.py` converts `<model>/logs/best_model_weights.pt` into that checkpoint folder when no native `.ckpt` exists — but if the region's model folder has **neither** `logs/lightning_logs/version_0/checkpoints/*.ckpt` **nor** `logs/best_model_weights.pt`, nothing is converted, the glob is empty and `[0]` fails. Typical causes: an interrupted HuggingFace download, a partially extracted archive, or a `models_path` pointing at an incomplete model set.
+**Root cause:** `champollion/evaluate.py` `load_model` takes the first match of `<model>/logs/lightning_logs/version_*/checkpoints/epoch=80-step=*.ckpt`. Before each region, `generate_embeddings.py` converts `<model>/logs/best_model_weights.pt` into that checkpoint folder when no native `.ckpt` exists — but if the region's model folder has **neither** `logs/lightning_logs/version_*/checkpoints/epoch=80-step=*.ckpt` **nor** `logs/best_model_weights.pt`, nothing is converted, the glob is empty and `[0]` fails. Typical causes: an interrupted HuggingFace download, a partially extracted archive, or a `models_path` pointing at an incomplete model set.
 
 **Fix:**
-1. Check every region folder under `models_path` for one of the two files: `ls <models_path>/<region>/logs/best_model_weights.pt <models_path>/<region>/logs/lightning_logs/version_0/checkpoints/`.
+1. Check every region folder under `models_path` for one of the two files: `ls <models_path>/<region>/logs/lightning_logs/version_*/checkpoints/ <models_path>/<region>/logs/best_model_weights.pt`.
 2. Re-fetch the models (re-run `start_embeddings` after deleting the incomplete cached copy), or, from the CLI, run `generate_embeddings.py --no-cache` to force re-extraction of an archive / re-download (`--no-cache` is not exposed by `start_embeddings`).
 3. Or point `models_path` at a complete model set.
 

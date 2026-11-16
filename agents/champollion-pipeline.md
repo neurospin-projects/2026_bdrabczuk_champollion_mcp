@@ -136,7 +136,7 @@ When a job fails:
 
 1. Call `get_job_log(output_dir, job_id)` — read the full log
 2. Look for known error patterns:
-   - `IndexError: list index out of range` → model folder under `models_path` is missing both `logs/lightning_logs/version_0/checkpoints/*.ckpt` and `logs/best_model_weights.pt`; re-fetch or point at a complete model set (see debug reference for details)
+   - `IndexError: list index out of range` → model folder under `models_path` is missing both `logs/lightning_logs/version_*/checkpoints/epoch=80-step=*.ckpt` and `logs/best_model_weights.pt`; re-fetch or point at a complete model set (see debug reference for details)
    - `No module named` → pixi environment not activated; check `preflight_check`
    - `FileNotFoundError` on `.arg` → wrong `path_to_graph`; verify with `ls {subjects_dir}/{subject}/{path_to_graph}/`
    - `CUDA out of memory` → use `cpu=True` (slower but avoids OOM) or free the GPU from other processes; `start_embeddings` has no job-count option (regions run one at a time)
