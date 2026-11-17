@@ -102,8 +102,9 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `datasets_root` | str | yes | Absolute path to the dataset root — the directory that contains `derivatives/` (e.g. `/data/TESTXX`). Crops are read from `{datasets_root}/derivatives/{cortical_version}/crops/{masks}/2mm/` |
 | `cpu` | bool | no | Force CPU (disable CUDA) |
 | `overwrite` | bool | no | Recompute regions whose `full_embeddings.csv` already exists (default: they are skipped) |
-| `masks` | str | no | Mask version used as the crops subdirectory (default: `canonical_25`) |
-| `masks_version` | str | no | Mask version subfolder to download from HuggingFace (e.g. `canonical_25`); ignored when `models_path` is a local directory |
+| `masks` | str | no | Mask version used as the crops subdirectory (default: `model_version`, else `canonical_25`) |
+| `model_version` | str | no | Model-set version (`--model-version`): the HuggingFace subfolder to download (e.g. `canonical_25`); ignored when `models_path` is a local directory |
+| `masks_version` | str | no | Deprecated alias of `model_version`: logs a warning and is forwarded as `--model-version`; a different `model_version` is refused |
 | `output` | str | no | Output base directory. Default: `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/` (`{masks}` = the `masks` above; e.g. `/data/TESTXX` → `/data/TESTXX/derivatives/champollion_V1/canonical_25/region_embeddings/`) |
 | `subjects` | str | no | Deprecated and ignored: each region reads its subject list from the `{side}skeleton_subject.csv` next to its skeleton |
 | `regions` | list[str] | no | Restrict to these region model names (e.g. `SCsylv_left`). Default: every region found in `models_path` |

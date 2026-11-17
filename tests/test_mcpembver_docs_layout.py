@@ -11,7 +11,8 @@ REQ-MCPSNAPOUT-BDRABCZUK-1CF725ADFF12):
 - REQ-MCPEMBVER-BDRABCZUK-62DB632A8387: Combined embeddings row + combined-CSV sanity check.
 - REQ-MCPEMBVER-BDRABCZUK-DF0A668F91B1: Per-fold embeddings row.
 - REQ-MCPEMBVER-BDRABCZUK-4AD451D69961: Snapshots row.
-- REQ-MCPEMBVER-BDRABCZUK-2126F306B416: ``{masks}`` placeholder defined in Output Locations.
+- REQ-MCPEMBVER-BDRABCZUK-2126F306B416 (superseded by TASK-MODELVER-BDRABCZUK-3C642461FB75): ``{masks}``
+  placeholder defined in Output Locations, with the model_version / masks_version fallback.
 - REQ-MCPEMBVER-BDRABCZUK-0DD8EB95BFDE: full-pipeline section states masks forwarding.
 - REQ-MCPEMBVER-BDRABCZUK-F5E791F49719: crops row follows start_pipeline's masks.
 - REQ-MCPEMBVER-BDRABCZUK-6D22EDDBD8C7: stage-4 ``output`` default is region_embeddings.
@@ -107,18 +108,16 @@ def test_snapshots_row_names_versioned_path(doc: Path) -> None:
 
 @pytest.mark.parametrize("doc", DOCS, ids=DOC_IDS)
 def test_output_locations_defines_masks_placeholder(doc: Path) -> None:
-    """REQ-MCPEMBVER-BDRABCZUK-2126F306B416: Output Locations defines `{masks}` as start_pipeline's
-    `masks` value, `canonical_25` when unset or empty.
+    """Output Locations defines `{masks}` as the first non-empty value among start_pipeline's `masks`,
+    `model_version` and `masks_version`, else `canonical_25` (supersedes REQ-MCPEMBVER-BDRABCZUK-2126F306B416,
+    TASK-MODELVER-BDRABCZUK-3C642461FB75).
 
-    Some single line of each Output Locations section must name `{masks}`, `masks`,
-    `start_pipeline` and `canonical_25` together.
+    Some single line of each Output Locations section must name `{masks}`, `masks`, `model_version`,
+    `masks_version`, `start_pipeline` and `canonical_25` together.
     """
+    names = ("`{masks}`", "`masks`", "`model_version`", "`masks_version`", "`start_pipeline`", "`canonical_25`")
     for section in _output_locations_sections(doc):
-        definitions = [
-            line
-            for line in section.splitlines()
-            if "`{masks}`" in line and "`masks`" in line and "`start_pipeline`" in line and "`canonical_25`" in line
-        ]
+        definitions = [line for line in section.splitlines() if all(name in line for name in names)]
         assert definitions, f"{_rel(doc)}: Output Locations never defines `{{masks}}`"
 
 

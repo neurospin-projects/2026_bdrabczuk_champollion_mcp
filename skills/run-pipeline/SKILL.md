@@ -280,7 +280,7 @@ Call `start_<stage>` with the parameters above. See `references/stage-params.md`
 
 ## Output Locations (full pipeline)
 
-`{masks}` is the `masks` value passed to `start_pipeline`, or `canonical_25` when that value is unset or empty; `{datasets_root}` is `start_pipeline`'s `datasets_root`, normally its dataset root.
+`{masks}` is the first non-empty value among the `masks`, `model_version` and `masks_version` values passed to `start_pipeline`, or `canonical_25` when all three are unset or empty; `{datasets_root}` is `start_pipeline`'s `datasets_root`, normally its dataset root.
 
 | Stage | Output path |
 |-------|-------------|

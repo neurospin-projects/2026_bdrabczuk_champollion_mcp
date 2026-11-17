@@ -128,7 +128,7 @@ _ALL_OPTIONS: dict = {
     "cpu": True,
     "overwrite": True,
     "masks": "canonical_25",
-    "masks_version": "canonical_25",
+    "model_version": "canonical_25",
     "output": "/abs/emb_out",
     "subjects": "/abs/subjects.csv",
     "regions": ["SC-sylv_left", "FIP_right"],
@@ -222,10 +222,10 @@ class TestPipelineForwardsEmbeddingsOptions:
         [
             ("regions", ["SC-sylv_left", "FIP_right"], ["--regions", "SC-sylv_left", "FIP_right"]),
             ("masks", "canonical_25", ["--masks", "canonical_25"]),
-            ("masks_version", "canonical_25", ["--masks-version", "canonical_25"]),
+            ("model_version", "canonical_25", ["--model-version", "canonical_25"]),
             ("cortical_version", "cortical_tiles-2027", ["--cortical_version", "cortical_tiles-2027"]),
         ],
-        ids=["regions", "masks", "masks_version", "cortical_version"],
+        ids=["regions", "masks", "model_version", "cortical_version"],
     )
     async def test_forwards_valued_option(self, pipeline_dir, tmp_path, launches, monkeypatch, name, value, expected):
         """REQ-MCP-EMBOPT-07: start_pipeline(<name>=value) puts the option and value in the embeddings argv."""

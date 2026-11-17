@@ -93,7 +93,7 @@ class TestEmbeddingsArgv:
             ("overwrite", True, ["--overwrite"]),
             ("run_cka", True, ["--run-cka"]),
             ("masks", "sk_masks", ["--masks", "sk_masks"]),
-            ("masks_version", "v2", ["--masks-version", "v2"]),
+            ("model_version", "v2", ["--model-version", "v2"]),
             ("output", "/abs/emb_out", ["--output", "/abs/emb_out"]),
             ("subjects", "/abs/subjects.csv", ["--subjects", "/abs/subjects.csv"]),
             ("regions", ["S.C.-sylv.", "F.I.P."], ["--regions", "S.C.-sylv.", "F.I.P."]),
