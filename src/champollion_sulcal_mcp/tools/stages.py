@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Annotated
@@ -10,6 +11,35 @@ from pydantic import Field
 
 from .. import preflight, runner
 from ..roots import get_roots, validate_subject_subpath, validate_within_roots
+
+logger = logging.getLogger(__name__)
+
+MASKS_VERSION_DEPRECATION = "masks_version is a deprecated alias of model_version; pass model_version instead"
+
+
+def normalize_model_version(model_version: str | None, masks_version: str | None) -> str | None:
+    """Fold the deprecated masks_version alias into model_version.
+
+    Args:
+        model_version: the model_version tool argument.
+        masks_version: its deprecated alias; a non-empty value logs a WARNING.
+
+    Returns:
+        The first non-empty value of model_version and masks_version, else None.
+
+    Raises:
+        ToolError: both are non-empty and differ.
+
+    Complexity: O(1).
+    """
+    if not masks_version:
+        return model_version or None
+    logger.warning(MASKS_VERSION_DEPRECATION)
+    if model_version and model_version != masks_version:
+        raise ToolError(
+            f"masks_version {masks_version!r} differs from model_version {model_version!r}: pass model_version only"
+        )
+    return masks_version
 
 
 def _require_absolute(path: str, name: str) -> None:
@@ -313,6 +343,7 @@ async def start_embeddings(
     cpu: bool = False,
     overwrite: bool = False,
     masks: str | None = None,
+    model_version: str | None = None,
     masks_version: str | None = None,
     output: str | None = None,
     subjects: str | None = None,
@@ -333,7 +364,10 @@ async def start_embeddings(
     legacy: read crops from derivatives/deep_folding-2025 (overrides cortical_version).
     checkpoint_epoch: training epoch N (0-based) of the Lightning checkpoint epoch=N-step=*.ckpt to
         evaluate each region with; omitted, the pipeline default (80) applies.
+    model_version: model-set version, forwarded as --model-version.
+    masks_version: deprecated alias of model_version (logs a warning; a different model_version is refused).
     """
+    model_version = normalize_model_version(model_version, masks_version)
     if _is_local_path(models_path):
         _require_absolute(models_path, "models_path")
         roots = await get_roots(ctx)
@@ -362,8 +396,8 @@ async def start_embeddings(
         argv.append("--run-cka")
     if masks:
         argv += ["--masks", masks]
-    if masks_version:
-        argv += ["--masks-version", masks_version]
+    if model_version:
+        argv += ["--model-version", model_version]
     if output:
         argv += ["--output", output]
     if subjects:

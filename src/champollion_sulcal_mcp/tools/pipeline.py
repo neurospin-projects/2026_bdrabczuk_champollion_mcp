@@ -33,6 +33,16 @@ CHILD_POLL_S = 2.0
 STAGE_ORDER = ["morphologist", "cortical_tiles", "config", "embeddings", "combine", "snapshots"]
 
 
+def _compute_run_version(kwargs: Mapping) -> str | None:
+    """Return the run's mask version V: the first non-empty chain value of masks and model_version, else None.
+
+    start_pipeline has already folded the deprecated masks_version alias into model_version.
+
+    Complexity: O(1).
+    """
+    return kwargs.get("masks") or kwargs.get("model_version") or None
+
+
 def _compute_masks_version_dir(datasets_root: str, masks: str | None) -> Path:
     """Return the champollion_V1 directory of one mask version, shared by stages 5 and 6.
 
@@ -41,7 +51,7 @@ def _compute_masks_version_dir(datasets_root: str, masks: str | None) -> Path:
 
     Args:
         datasets_root: dataset root (the directory holding ``derivatives/``).
-        masks: mask version tag passed to start_pipeline; empty or None means the
+        masks: the run's mask version (_compute_run_version); empty or None means the
             pipeline default, DEFAULT_MASKS_VERSION. Used for paths only.
 
     Returns:
@@ -122,7 +132,9 @@ def _cortical_tiles_input(output_dir: str, kwargs: Mapping) -> FileCheck:
 
 
 def _cortical_tiles_output(output_dir: str, kwargs: Mapping) -> FileCheck:
-    return FileCheck(_CROPS_LABEL, _crops_dir(output_dir, CORTICAL_TILES_FOLDER, kwargs.get("masks")), _CROPS_PATTERNS)
+    return FileCheck(
+        _CROPS_LABEL, _crops_dir(output_dir, CORTICAL_TILES_FOLDER, _compute_run_version(kwargs)), _CROPS_PATTERNS
+    )
 
 
 def _config_input(output_dir: str, kwargs: Mapping) -> FileCheck:
@@ -138,23 +150,25 @@ def _config_output(output_dir: str, kwargs: Mapping) -> FileCheck:
 
 def _embeddings_input(output_dir: str, kwargs: Mapping) -> FileCheck:
     folder = kwargs.get("cortical_version") or CORTICAL_TILES_FOLDER
-    return FileCheck(_CROPS_LABEL, _crops_dir(kwargs["datasets_root"], folder, kwargs.get("masks")), _CROPS_PATTERNS)
+    return FileCheck(
+        _CROPS_LABEL, _crops_dir(kwargs["datasets_root"], folder, _compute_run_version(kwargs)), _CROPS_PATTERNS
+    )
 
 
 def _combine_input(output_dir: str, kwargs: Mapping) -> FileCheck:
-    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], _compute_run_version(kwargs))
     return FileCheck(
         "region embeddings (*/full_embeddings.csv)", version_dir / REGION_EMBEDDINGS_SUBDIR, ("*/full_embeddings.csv",)
     )
 
 
 def _snapshots_input(output_dir: str, kwargs: Mapping) -> FileCheck:
-    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], _compute_run_version(kwargs))
     return FileCheck("combined embeddings (*_embeddings.csv)", version_dir / EMBEDDINGS_SUBDIR, ("*_embeddings.csv",))
 
 
 def _snapshots_output(output_dir: str, kwargs: Mapping) -> FileCheck:
-    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+    version_dir = _compute_masks_version_dir(kwargs["datasets_root"], _compute_run_version(kwargs))
     return FileCheck("snapshot PNG", version_dir / SNAPSHOTS_SUBDIR, ("*.png",))
 
 
@@ -227,6 +241,7 @@ async def start_pipeline(
     run_cka: bool = False,
     regions: list[str] | None = None,
     masks: str | None = None,
+    model_version: str | None = None,
     masks_version: str | None = None,
     cortical_version: str | None = None,
     log: bool = True,
@@ -236,13 +251,16 @@ async def start_pipeline(
 
     ``reference_data_dir`` is optional and forwarded to stage 6 (snapshots) for UMAP plots.
 
-    A non-empty ``masks`` is forwarded to stages 2, 3 and 4, and names the
-    ``<datasets_root>/derivatives/champollion_V1/<masks or canonical_25>/`` directory that
+    ``masks_version`` is a deprecated alias of ``model_version`` (logs a warning; a different
+    ``model_version`` is refused). The run's mask version V is the first non-empty value of
+    ``masks`` and ``model_version``, else ``canonical_25``: V is forwarded to stages 2 and 3 as
+    ``masks`` and names the ``<datasets_root>/derivatives/champollion_V1/<V>/`` directory that
     stages 5 and 6 read and write (``region_embeddings``, ``embeddings``, ``snapshots``).
-    ``overwrite``, ``run_cka``, ``regions``, ``masks_version`` and ``cortical_version``
-    apply to stage 4 (embeddings) only. ``regions`` are model names (e.g. ``SCsylv_left``);
+    ``overwrite``, ``run_cka``, ``regions``, ``masks``, ``model_version`` and ``cortical_version``
+    are forwarded to stage 4 (embeddings). ``regions`` are model names (e.g. ``SCsylv_left``);
     ``cortical_version`` must name where the stage-2 crops actually are.
     """
+    model_version = stages.normalize_model_version(model_version, masks_version)
     skip = set(skip_stages or [])
     active_stages = [s for s in STAGE_ORDER if s not in skip]
     chain = {
@@ -263,7 +281,7 @@ async def start_pipeline(
         "run_cka": run_cka,
         "regions": regions,
         "masks": masks,
-        "masks_version": masks_version,
+        "model_version": model_version,
         "cortical_version": cortical_version,
         "log": log,
     }
@@ -447,11 +465,11 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             sk_qc_path=kwargs.get("sk_qc_path"),
             njobs=kwargs.get("njobs"),
             labelling_session=kwargs.get("labelling_session"),
-            masks=kwargs.get("masks"),
+            masks=_compute_run_version(kwargs),
             log=log,
         )
     elif stage_name == "config":
-        masks = kwargs.get("masks")
+        masks = _compute_run_version(kwargs)
         return await stages.start_config(
             crop_path=kwargs["crop_path"],
             dataset=kwargs["dataset"],
@@ -467,19 +485,19 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
             run_cka=kwargs.get("run_cka", False),
             regions=kwargs.get("regions"),
             masks=kwargs.get("masks"),
-            masks_version=kwargs.get("masks_version"),
+            model_version=kwargs.get("model_version"),
             cortical_version=kwargs.get("cortical_version"),
             log=log,
         )
     elif stage_name == "combine":
-        version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+        version_dir = _compute_masks_version_dir(kwargs["datasets_root"], _compute_run_version(kwargs))
         return await stages.start_combine(
             embeddings_source=str(version_dir / REGION_EMBEDDINGS_SUBDIR),
             output_path=str(version_dir / EMBEDDINGS_SUBDIR),
             log=log,
         )
     elif stage_name == "snapshots":
-        version_dir = _compute_masks_version_dir(kwargs["datasets_root"], kwargs.get("masks"))
+        version_dir = _compute_masks_version_dir(kwargs["datasets_root"], _compute_run_version(kwargs))
         return await stages.start_snapshots(
             output_dir=str(version_dir / SNAPSHOTS_SUBDIR),
             morphologist_dir=kwargs.get("input_dir"),
