@@ -3,11 +3,12 @@
 When start_pipeline runs the snapshots stage, the MCP server passes
 ``<datasets_root>/derivatives/champollion_V1/<V>/snapshots`` as
 generate_snapshots.py's ``--output_dir``, where V is the ``masks`` parameter,
-or ``canonical_25`` when ``masks`` is unset.
+or ``canonical_corrected_26_1`` (the pipeline default, TASK-MODELVER-BDRABCZUK-2D826D2F0C5C)
+when ``masks`` is unset.
 
 Reference: champollion_pipeline main.py, whose default stage-6 output is
 ``<datasets_root>/derivatives/champollion_V1/<masks>/snapshots``, with
-``derivatives_layout.DEFAULT_MASKS_VERSION = "canonical_25"``. The base is
+``derivatives_layout.DEFAULT_MASKS_VERSION = "canonical_corrected_26_1"``. The base is
 ``datasets_root``, not start_pipeline's ``output_dir``.
 
 Supersedes REQ-MCP-SNAPOUT-01 (``<output_dir>/derivatives/champollion_V1/snapshots``).
@@ -51,10 +52,10 @@ async def test_snapshots_output_dir_is_masks_dir_under_datasets_root_when_masks_
     assert _argv_value(argv, "--output_dir") == str(expected)
 
 
-async def test_snapshots_output_dir_defaults_to_canonical_25_when_masks_unset(
+async def test_snapshots_output_dir_defaults_to_pipeline_default_when_masks_unset(
     fake_pipeline_dir, tmp_path, recording_runner
 ):
-    """With masks unset (None, as _execute_pipeline forwards it), V is canonical_25."""
+    """With masks unset (None, as _execute_pipeline forwards it), V is the pipeline default canonical_corrected_26_1."""
     output_dir = tmp_path / "run_output"
     datasets_root = tmp_path / "DEMO01"
 
@@ -67,5 +68,5 @@ async def test_snapshots_output_dir_defaults_to_canonical_25_when_masks_unset(
     )
 
     argv = recording_runner[0]["argv"]
-    expected = datasets_root / "derivatives" / "champollion_V1" / "canonical_25" / "snapshots"
+    expected = datasets_root / "derivatives" / "champollion_V1" / "canonical_corrected_26_1" / "snapshots"
     assert _argv_value(argv, "--output_dir") == str(expected)

@@ -25,7 +25,7 @@ CHAMPOLLION_SUBDIR = "champollion_V1"
 EMBEDDINGS_SUBDIR = "embeddings"
 SNAPSHOTS_SUBDIR = "snapshots"
 REGION_EMBEDDINGS_SUBDIR = "region_embeddings"
-DEFAULT_MASKS_VERSION = "canonical_25"
+DEFAULT_MASKS_VERSION = "canonical_corrected_26_1"
 
 DRIVER_MODULE = "champollion_sulcal_mcp.pipeline_driver"
 CHILD_POLL_S = 2.0
@@ -55,7 +55,7 @@ def _compute_masks_version_dir(datasets_root: str, masks: str | None) -> Path:
             pipeline default, DEFAULT_MASKS_VERSION. Used for paths only.
 
     Returns:
-        Path(datasets_root) / "derivatives" / "champollion_V1" / (masks or "canonical_25").
+        Path(datasets_root) / "derivatives" / "champollion_V1" / (masks or DEFAULT_MASKS_VERSION).
 
     Complexity: O(1).
     """
@@ -253,7 +253,7 @@ async def start_pipeline(
 
     ``masks_version`` is a deprecated alias of ``model_version`` (logs a warning; a different
     ``model_version`` is refused). The run's mask version V is the first non-empty value of
-    ``masks`` and ``model_version``, else ``canonical_25``: V is forwarded to stages 2 and 3 as
+    ``masks`` and ``model_version``, else ``canonical_corrected_26_1``: V is forwarded to stages 2 and 3 as
     ``masks`` and names the ``<datasets_root>/derivatives/champollion_V1/<V>/`` directory that
     stages 5 and 6 read and write (``region_embeddings``, ``embeddings``, ``snapshots``).
     ``overwrite``, ``run_cka``, ``regions``, ``masks``, ``model_version`` and ``cortical_version``

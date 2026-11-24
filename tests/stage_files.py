@@ -14,7 +14,7 @@ from champollion_sulcal_mcp import job_store
 from champollion_sulcal_mcp.tools import pipeline
 
 CT_FOLDER = "cortical_tiles-2026"
-MASKS = "canonical_25"
+MASKS = "canonical_corrected_26_1"  # MCP default Mask version, masks unset (TASK-MODELVER-BDRABCZUK-2D826D2F0C5C)
 RESOLUTION = "2mm"
 SUBJECT = "sub-0001"
 REGION = "S.C.-sylv._left"
@@ -33,7 +33,9 @@ def _crop(crops_dir: Path) -> None:
 
 def seed_stage_files(kwargs: dict) -> None:
     """Write one file matching each stage check (input and output) for these start_pipeline kwargs."""
-    masks = kwargs.get("masks") or MASKS
+    # Run Mask version V: first non-empty of masks, model_version, masks_version, else the default
+    # (REQ-MCPJOBS-BDRABCZUK-D1F08FB01C49 and the other stage-check Requirements).
+    masks = kwargs.get("masks") or kwargs.get("model_version") or kwargs.get("masks_version") or MASKS
     graph = Path(SUBJECT) / kwargs["path_to_graph"] / f"R{SUBJECT}.arg"
     _touch(Path(kwargs["input_dir"]) / f"{SUBJECT}.nii.gz")
     _touch(Path(kwargs["input_dir"]) / graph)
