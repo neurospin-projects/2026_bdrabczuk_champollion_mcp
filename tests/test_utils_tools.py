@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from champollion_sulcal_mcp.tools.utils import TOOL_NAMES, get_pipeline_info, preflight_check
+from champollion_sulcal_mcp.tools.utils import get_pipeline_info, preflight_check
 
 
 @pytest.mark.unit
@@ -21,11 +21,39 @@ async def test_get_pipeline_info_stages_complete():
     assert set(result["stages"].keys()) == expected_stages
 
 
+async def _registered_tool_names() -> set[str]:
+    from champollion_sulcal_mcp.server import mcp
+
+    return {tool.name for tool in await mcp.list_tools()}
+
+
 @pytest.mark.unit
 async def test_get_pipeline_info_tools_complete():
+    """REQ-MODELVER-BDRABCZUK-6859789716FD: tools equals the server's registered tool set."""
     result = await get_pipeline_info()
-    assert set(result["tools"]) == set(TOOL_NAMES)
-    assert len(result["tools"]) == 13
+    registered = await _registered_tool_names()
+    assert set(result["tools"]) == registered, (
+        f"missing {sorted(registered - set(result['tools']))}, extra {sorted(set(result['tools']) - registered)}"
+    )
+    assert len(result["tools"]) == len(registered)
+
+
+@pytest.mark.unit
+async def test_get_pipeline_info_tools_follow_a_newly_registered_tool():
+    """REQ-MODELVER-BDRABCZUK-6859789716FD: a tool registered later appears without editing tools/utils.py."""
+    from champollion_sulcal_mcp.server import mcp
+
+    async def alm_probe_extra_tool() -> dict:
+        """Probe tool registered only for this test."""
+        return {}
+
+    mcp.tool(alm_probe_extra_tool)
+    try:
+        result = await get_pipeline_info()
+        assert "alm_probe_extra_tool" in result["tools"]
+        assert set(result["tools"]) == await _registered_tool_names()
+    finally:
+        mcp.local_provider.remove_tool("alm_probe_extra_tool")
 
 
 @pytest.mark.unit
