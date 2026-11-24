@@ -282,7 +282,7 @@ async def start_config(
     supplied, so the pipeline defaults apply otherwise. When supplied, `output` and
     `external_config` must be absolute paths and, when the MCP client declares
     roots, inside a declared root. `masks` is the mask version tag forwarded as
-    --masks; it must match the stage-2 masks (script default canonical_25).
+    --masks; it must match the stage-2 masks (script default canonical_corrected_26_1).
     """
     _require_absolute(crop_path, "crop_path")
     if output:

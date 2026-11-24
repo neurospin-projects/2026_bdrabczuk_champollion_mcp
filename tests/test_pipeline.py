@@ -145,7 +145,8 @@ async def test_combine_argv_output_path_is_derivatives_champollion_v1_embeddings
 ):
     """REQ-MCPEMBVER-BDRABCZUK-6418DC8E1DF1 (supersedes REQ-MCP-OUTLOC-05): start_pipeline's
     combine stage, for dataset root R and no masks, launches put_together_embeddings.py with
-    `--output_path R/derivatives/champollion_V1/canonical_25/embeddings`.
+    `--output_path R/derivatives/champollion_V1/canonical_corrected_26_1/embeddings`
+    (the pipeline default Mask version, REQ-MCPEMBVER-BDRABCZUK-64FB25126C96).
     """
     dataset_root = tmp_path / "DEMO01"
 
@@ -156,7 +157,7 @@ async def test_combine_argv_output_path_is_derivatives_champollion_v1_embeddings
     )
 
     argv = recording_runner[0]["argv"]
-    expected = dataset_root / "derivatives" / "champollion_V1" / "canonical_25" / "embeddings"
+    expected = dataset_root / "derivatives" / "champollion_V1" / "canonical_corrected_26_1" / "embeddings"
     assert _argv_value(argv, "--output_path") == str(expected)
 
 
@@ -164,7 +165,7 @@ async def test_combine_argv_output_path_is_derivatives_champollion_v1_embeddings
 async def test_snapshots_argv_embeddings_dir_matches_combine_output_path(fake_pipeline_dir, tmp_path, recording_runner):
     """REQ-MCPEMBVER-BDRABCZUK-5453862A9906 (supersedes REQ-MCP-OUTLOC-06): start_pipeline's
     snapshots stage, for dataset root R and no masks, launches generate_snapshots.py with
-    `--embeddings_dir R/derivatives/champollion_V1/canonical_25/embeddings` — the same
+    `--embeddings_dir R/derivatives/champollion_V1/canonical_corrected_26_1/embeddings` — the same
     directory the combine stage writes to — so UMAP reads the combined CSVs.
     """
     dataset_root = tmp_path / "DEMO01"
@@ -178,7 +179,7 @@ async def test_snapshots_argv_embeddings_dir_matches_combine_output_path(fake_pi
     )
 
     combine_argv, snapshots_argv = recording_runner[0]["argv"], recording_runner[1]["argv"]
-    expected = str(dataset_root / "derivatives" / "champollion_V1" / "canonical_25" / "embeddings")
+    expected = str(dataset_root / "derivatives" / "champollion_V1" / "canonical_corrected_26_1" / "embeddings")
     assert _argv_value(snapshots_argv, "--embeddings_dir") == expected
     assert _argv_value(snapshots_argv, "--embeddings_dir") == _argv_value(combine_argv, "--output_path")
 
@@ -241,7 +242,8 @@ async def test_snapshots_argv_output_dir_is_derivatives_champollion_v1_snapshots
 ):
     """REQ-MCPEMBVER-BDRABCZUK-7B129D469C6A (supersedes REQ-MCP-SNAPOUT-01): start_pipeline's
     snapshots stage, for dataset root R and no masks, launches generate_snapshots.py with
-    `--output_dir R/derivatives/champollion_V1/canonical_25/snapshots`.
+    `--output_dir R/derivatives/champollion_V1/canonical_corrected_26_1/snapshots`
+    (the pipeline default Mask version, REQ-MCPEMBVER-BDRABCZUK-D34806CFF1C4).
     """
     dataset_root = tmp_path / "DEMO01"
 
@@ -253,5 +255,5 @@ async def test_snapshots_argv_output_dir_is_derivatives_champollion_v1_snapshots
     )
 
     argv = recording_runner[0]["argv"]
-    expected = dataset_root / "derivatives" / "champollion_V1" / "canonical_25" / "snapshots"
+    expected = dataset_root / "derivatives" / "champollion_V1" / "canonical_corrected_26_1" / "snapshots"
     assert _argv_value(argv, "--output_dir") == str(expected)

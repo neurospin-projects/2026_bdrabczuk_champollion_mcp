@@ -31,7 +31,7 @@ GRAPH = "t1mri/default_acquisition/default_analysis/folds/3.3/base"
 SK = "t1mri/default_acquisition/default_analysis/segmentation"
 DATASET = "DS"
 CT_FOLDER = "cortical_tiles-2026"  # champollion_pipeline utils/lib.py DERIVATIVES_FOLDER
-MASKS = "canonical_25"
+MASKS = "canonical_corrected_26_1"  # MCP default Mask version, masks unset (TASK-MODELVER-BDRABCZUK-2D826D2F0C5C)
 REGION = "SC-sylv"
 MODEL = "SC-sylv_left"
 

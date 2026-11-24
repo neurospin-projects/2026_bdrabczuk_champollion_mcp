@@ -7,7 +7,7 @@ writes ``crops/<V>/2mm``, stage 4 reads it, and stages 4-6 use ``champollion_V1/
 pipeline-driver file check follows the same V:
 
 V = the first non-empty start_pipeline value among masks, model_version and masks_version,
-else canonical_25.
+else canonical_corrected_26_1 (TASK-MODELVER-BDRABCZUK-2D826D2F0C5C).
 
 Stage-2 argv: the real _launch_stage and start_cortical_tiles run, runner.launch is the
 ``launches`` recorder. Stage-3: start_config is a recorder. File checks: _launch_stage is a fake
