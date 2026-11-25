@@ -350,7 +350,6 @@ async def start_embeddings(
     regions: list[str] | None = None,
     run_cka: bool = False,
     cortical_version: str | None = None,
-    profiling: bool = False,
     no_cache: bool = False,
     legacy: bool = False,
     checkpoint_epoch: Annotated[int, Field(ge=0)] | None = None,
@@ -359,7 +358,6 @@ async def start_embeddings(
 ) -> dict:
     """Launch Stage 4: compute sulcal embeddings across all 56 model folds (28 regions × 2 hemispheres).
 
-    profiling: run the embeddings script under cProfile.
     no_cache: re-extract a models archive, ignoring the cache.
     legacy: read crops from derivatives/deep_folding-2025 (overrides cortical_version).
     checkpoint_epoch: training epoch N (0-based) of the Lightning checkpoint epoch=N-step=*.ckpt to
@@ -406,8 +404,6 @@ async def start_embeddings(
         argv += ["--regions"] + regions
     if cortical_version:
         argv += ["--cortical_version", cortical_version]
-    if profiling:
-        argv.append("--profiling")
     if no_cache:
         argv.append("--no-cache")
     if legacy:

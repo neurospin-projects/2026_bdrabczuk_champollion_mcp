@@ -188,7 +188,6 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `cortical_version` | Derivatives folder holding the crops (default: `cortical_tiles-2026`) |
 | `masks_version` | Mask version subfolder to download from HuggingFace; ignored for a local `models_path` |
 | `run_cka` | `True` to run the CKA coherence test after embeddings |
-| `profiling` | `True` to run under cProfile |
 | `no_cache` | `True` to force archive re-extraction / HuggingFace re-download |
 | `legacy` | `True` to read crops from `derivatives/deep_folding-2025/crops/2mm/` (overrides `cortical_version`) |
 | `checkpoint_epoch` | Training epoch N (0-based, must be >= 0) of the Lightning checkpoint evaluated for each region (pipeline default: 80) |

@@ -110,7 +110,6 @@ Runs inference for every region model in `models_path` (56 for the full Champoll
 | `regions` | list[str] | no | Restrict to these region model names (e.g. `SCsylv_left`). Default: every region found in `models_path` |
 | `run_cka` | bool | no | Run the CKA coherence test after embeddings (results in `{output}/cka_results/`) |
 | `cortical_version` | str | no | Derivatives folder that holds the crops (default: `cortical_tiles-2026`) |
-| `profiling` | bool | no | Run the embeddings script under cProfile (`--profiling`) |
 | `no_cache` | bool | no | Force archive re-extraction / HuggingFace re-download (`--no-cache`) |
 | `legacy` | bool | no | Read crops from `derivatives/deep_folding-2025/crops/2mm/` (`--legacy`; overrides `cortical_version`) |
 | `checkpoint_epoch` | int | no | Training epoch N (0-based, must be >= 0) of the Lightning checkpoint `epoch=N-step=*.ckpt` evaluated for each region (`--checkpoint-epoch`; pipeline default 80) |
