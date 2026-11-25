@@ -95,7 +95,7 @@ For **stage-centric** runs, required per stage:
 - **Stage 2 (cortical_tiles)**: `input_dir` (Morphologist subjects/), `output_dir`, `path_to_graph`, `path_sk_with_hull`
 - **Stage 3 (config)**: `crop_path` (`crops/{masks}/2mm/` from stage 2, default `crops/canonical_25/2mm/`), `dataset` name, optional `output` (a configs root: ask the user whether to override; default `<D>/<dataset>/derivatives/champollion_V1/configs`, `<D>` = parent of the `<dataset>` directory in `crop_path`)
 - **Training (optional, `start_training`)**: `dataset`, `region`; `config_dir` defaults to `<roots[0]>/data/<dataset>/derivatives/champollion_V1/configs` when MCP roots are declared (first root, same base as the `output_dir` default), else `<pipeline>/data/<dataset>/derivatives/champollion_V1/configs`; pass `<D>/<dataset>/derivatives/champollion_V1/configs` when the configs live elsewhere, or the stage-3 `output` configs root if one was set
-- **Stage 4 (embeddings)**: `models_path` (local model dir, `.tar.gz`, URL or HF repo ID), `datasets_root` (dataset root containing `derivatives/`); optional `output` (default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/`; {masks} is the stage-4 masks value, default canonical_25), `cpu`, `overwrite`, `regions`, `masks`, `masks_version`, `cortical_version`, `run_cka`, `profiling`, `no_cache`, `legacy`, `checkpoint_epoch`
+- **Stage 4 (embeddings)**: `models_path` (local model dir, `.tar.gz`, URL or HF repo ID), `datasets_root` (dataset root containing `derivatives/`); optional `output` (default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/`; {masks} is the stage-4 masks value, default canonical_25), `cpu`, `overwrite`, `regions`, `masks`, `masks_version`, `cortical_version`, `run_cka`, `no_cache`, `legacy`, `checkpoint_epoch`
 - **Stage 5 (combine)**: `embeddings_source` (the stage-4 `output` directory, default `{datasets_root}/derivatives/champollion_V1/{masks}/region_embeddings/`), `output_path`
 - **Stage 6 (snapshots)**: `output_dir`, at least one of: `morphologist_dir`, `cortical_tiles_dir`, `embeddings_dir`; UMAP plots additionally need `reference_data_dir` (not shipped, no default — ask the user)
 
@@ -205,7 +205,7 @@ pixi run python3 src/champollion_pipeline/generate_snapshots.py \
 ```
 
 > **CLI-only flags (not exposed via MCP):** `--input-types` (default `skeleton foldlabel`), `--with-distbottom` (opt-in), `--skip-distbottom` (deprecated no-op) (stage 2). Do not attempt to pass these.
-> **CLI-only flags (not exposed via MCP):** `--profiling`, `--no-cache` (force archive re-extraction / HuggingFace re-download), `--legacy` (read crops from `derivatives/deep_folding-2025/crops/2mm/`) (stage 4). Do not attempt to pass these.
+> **CLI-only flags (not exposed via MCP):** `--profiling` (deprecated in favour of `main.py --profile DIR`), `--no-cache` (force archive re-extraction / HuggingFace re-download), `--legacy` (read crops from `derivatives/deep_folding-2025/crops/2mm/`) (stage 4). Do not attempt to pass these.
 
 ---
 

@@ -1,4 +1,9 @@
-"""Stage-4 options on start_embeddings and start_pipeline (TASK-050, REQ-MCP-EMBOPT-01..03, -05..07).
+"""Stage-4 options on start_embeddings and start_pipeline (TASK-050, REQ-MCP-EMBOPT-02..03, -05..07).
+
+REQ-MCP-EMBOPT-01 (profiling appends --profiling, REQ-MCPEMBOPT-BDRABCZUK-D22DE1C46726) is superseded
+by REQ-MCPEMBOPT-BDRABCZUK-67E8CEB3A56C and -21044F71E829 under REQ-MCPEMBOPT-BDRABCZUK-8B298DCB9D67:
+champollion_pipeline deprecates generate_embeddings.py --profiling, so the MCP server no longer
+forwards it (TASK-MCPEMBOPT-BDRABCZUK-F275ADAC384B).
 
 REQ-MCP-EMBOPT-04 (use_last_checkpoint) is superseded by REQ-MCPEMBOPT-BDRABCZUK-53C7DE141356
 and REQ-MCPEMBOPT-BDRABCZUK-09CD41362839: champollion_pipeline removed --use_last_checkpoint and
@@ -13,6 +18,7 @@ interpreter (generate_embeddings.py imports torch at module level).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -44,7 +50,7 @@ def _contains_run(argv: list[str], tokens: list[str]) -> bool:
     return any(argv[i : i + n] == tokens for i in range(len(argv) - n + 1))
 
 
-# --- REQ-MCP-EMBOPT-01..03: new boolean flags on start_embeddings ---
+# --- REQ-MCP-EMBOPT-02..03: new boolean flags on start_embeddings ---
 
 
 @pytest.mark.unit
@@ -52,16 +58,44 @@ class TestEmbeddingsNewFlags:
     @pytest.mark.parametrize(
         ("name", "flag"),
         [
-            ("profiling", "--profiling"),  # REQ-MCP-EMBOPT-01
             ("no_cache", "--no-cache"),  # REQ-MCP-EMBOPT-02
             ("legacy", "--legacy"),  # REQ-MCP-EMBOPT-03
         ],
-        ids=["profiling", "no_cache", "legacy"],
+        ids=["no_cache", "legacy"],
     )
     async def test_appends_flag(self, pipeline_dir, tmp_path, launches, name, flag):
-        """REQ-MCP-EMBOPT-01..03: `<name>=True` appends its generate_embeddings.py flag."""
+        """REQ-MCP-EMBOPT-02..03: `<name>=True` appends its generate_embeddings.py flag."""
         await stages.start_embeddings(**_embeddings_kwargs(tmp_path), **{name: True})
         assert flag in launches[0]["argv"][2:], launches[0]["argv"]
+
+
+# --- TASK-MCPEMBOPT-BDRABCZUK-F275ADAC384B: profiling removed (the pipeline deprecates --profiling) ---
+
+
+@pytest.mark.unit
+class TestEmbeddingsNoProfiling:
+    async def test_profiling_request_launches_no_profiling_flag(self, pipeline_dir, tmp_path, launches):
+        """REQ-MCPEMBOPT-BDRABCZUK-8B298DCB9D67: no launch the MCP server makes carries --profiling.
+
+        A client asking for profiling either gets an error or a launch without the flag.
+        """
+        async with Client(mcp) as client:
+            with contextlib.suppress(ToolError):
+                await client.call_tool("start_embeddings", {**_embeddings_kwargs(tmp_path), "profiling": True})
+        for launch in launches:
+            assert "--profiling" not in launch["argv"], launch["argv"]
+
+    async def test_schema_omits_profiling(self):
+        """REQ-MCPEMBOPT-BDRABCZUK-67E8CEB3A56C: the tool input schema has no profiling property."""
+        tool = await mcp.get_tool("start_embeddings")
+        assert "profiling" not in tool.parameters["properties"]
+
+    async def test_call_with_profiling_errors_without_launch(self, pipeline_dir, tmp_path, launches):
+        """REQ-MCPEMBOPT-BDRABCZUK-21044F71E829: a profiling argument is a validation error; nothing launches."""
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError, match="profiling"):
+                await client.call_tool("start_embeddings", {**_embeddings_kwargs(tmp_path), "profiling": True})
+        assert launches == []
 
 
 # --- TASK-EPOCH80: use_last_checkpoint removed (the pipeline no longer accepts the flag) ---
@@ -134,7 +168,6 @@ _ALL_OPTIONS: dict = {
     "regions": ["SC-sylv_left", "FIP_right"],
     "run_cka": True,
     "cortical_version": "cortical_tiles-2027",
-    "profiling": True,
     "no_cache": True,
     "legacy": True,
     "checkpoint_epoch": 12,

@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Job records carry two new public fields: `outcome` (`partial` or null) and `skipped_subjects` (the subjects a
   `cortical_tiles` run summary names; a pipeline job keeps them from its partial `cortical_tiles` stage).
 
+### Removed
+
+- **BREAKING:** `start_embeddings` no longer accepts the `profiling` parameter: a call that passes it gets a
+  validation error and launches nothing. champollion_pipeline deprecates `generate_embeddings.py --profiling`;
+  profile a run with `main.py --profile DIR`.
+
 ## [0.1.0] - 2026-10-19
 
 First public release of the Champollion sulcal MCP server.
