@@ -5,16 +5,17 @@ import contextlib
 import glob
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
-from .. import job_store, runner
+from .. import job_store, preflight, runner
 from ..job_store import JobState
 from . import stages
 
@@ -77,6 +78,50 @@ _CROPS_LABEL = "skeleton crops (*/mask/*skeleton.npy)"
 _CROPS_PATTERNS = ("*/mask/*skeleton.npy",)
 
 
+GRAPH_DISCOVERY_TIMEOUT_S = 30.0
+_DISCOVER_SNIPPET = (
+    "import sys; "
+    "from champollion_pipeline.file_indexer.pipeline_checks import FileIndexStageIndexer as I; "
+    "print(len(I('').discover_graphs(sys.argv[1])))"
+)
+_REASON_MAX_CHARS = 200
+
+
+class GraphCountUnknown(Exception):  # noqa: N818 - a state, named for the message "graph count unknown"
+    """The pipeline's graph discovery gave no count; the message is the reason."""
+
+
+def discovered_graph_count(directory: Path) -> int:
+    """Number of graphs below ``directory`` per champollion_pipeline FileIndexStageIndexer.discover_graphs.
+
+    Runs the pipeline's own discovery in the pipeline interpreter (no import here), bounded by
+    GRAPH_DISCOVERY_TIMEOUT_S. Raises GraphCountUnknown when it cannot start, exits non-zero, times out or
+    prints no integer. Complexity: O(1) here; the walk is the pipeline's.
+    """
+    try:
+        loc = preflight.detect()
+        done = subprocess.run(
+            [str(loc.python_exe), "-c", _DISCOVER_SNIPPET, str(directory)],
+            cwd=str(loc.pipeline_dir),
+            capture_output=True,
+            text=True,
+            timeout=GRAPH_DISCOVERY_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise GraphCountUnknown(f"timed out after {error.timeout} s") from error
+    except (OSError, FileNotFoundError) as error:
+        raise GraphCountUnknown(f"could not start: {error}"[:_REASON_MAX_CHARS]) from error
+    if done.returncode != 0:
+        lines = done.stderr.strip().splitlines()
+        raise GraphCountUnknown(f"exit {done.returncode}: {lines[-1] if lines else ''}"[:_REASON_MAX_CHARS])
+    lines = done.stdout.strip().splitlines()
+    try:
+        return int(lines[-1])
+    except (IndexError, ValueError) as error:
+        raise GraphCountUnknown("no graph count printed") from error
+
+
 @dataclass(frozen=True)
 class FileCheck:
     """One expected-file check: ``what`` names it in the error, ``directory`` is the path the error gives."""
@@ -84,12 +129,24 @@ class FileCheck:
     what: str
     directory: Path
     patterns: tuple[str, ...]
+    discover: bool = False
+    unknown_reason: list[str] = field(default_factory=list, compare=False)
 
     def present(self) -> bool:
-        """True iff directory is a directory holding at least one regular file matching a pattern; never raises."""
+        """True iff directory is a directory holding at least one regular file matching a pattern; never raises.
+
+        With ``discover`` the count comes from the pipeline's graph discovery; an unknown count is not present
+        and its reason is kept in ``unknown_reason``.
+        """
         try:
             if not self.directory.is_dir():
                 return False
+            if self.discover:
+                try:
+                    return discovered_graph_count(self.directory) > 0
+                except GraphCountUnknown as unknown:
+                    self.unknown_reason.append(str(unknown))
+                    return False
             return any(match.is_file() for pattern in self.patterns for match in self.directory.glob(pattern))
         except (OSError, ValueError, NotImplementedError):
             return False
@@ -99,11 +156,20 @@ CheckBuilder = Callable[[str, Mapping], FileCheck]
 
 
 def _graphs_label(kwargs: Mapping) -> str:
+    if kwargs.get("path_to_graph") is None:
+        return "Morphologist graphs (pipeline graph discovery)"
     return f"Morphologist graphs (*/{kwargs['path_to_graph']}/R*.arg)"
 
 
 def _graphs_patterns(kwargs: Mapping) -> tuple[str, ...]:
     return (f"*/{glob.escape(kwargs['path_to_graph'])}/R*.arg",)
+
+
+def _graphs_check(directory: Path, kwargs: Mapping) -> FileCheck:
+    """The graph check of ``directory``: the glob for a given path_to_graph, else the pipeline's graph discovery."""
+    if kwargs.get("path_to_graph") is None:
+        return FileCheck(_graphs_label(kwargs), directory, (), discover=True)
+    return FileCheck(_graphs_label(kwargs), directory, _graphs_patterns(kwargs))
 
 
 def _crops_dir(root: str, folder: str, masks: str | None) -> Path:
@@ -124,11 +190,11 @@ def _morphologist_input(output_dir: str, kwargs: Mapping) -> FileCheck:
 
 
 def _morphologist_output(output_dir: str, kwargs: Mapping) -> FileCheck:
-    return FileCheck(_graphs_label(kwargs), Path(output_dir), _graphs_patterns(kwargs))
+    return _graphs_check(Path(output_dir), kwargs)
 
 
 def _cortical_tiles_input(output_dir: str, kwargs: Mapping) -> FileCheck:
-    return FileCheck(_graphs_label(kwargs), Path(kwargs["input_dir"]), _graphs_patterns(kwargs))
+    return _graphs_check(Path(kwargs["input_dir"]), kwargs)
 
 
 def _cortical_tiles_output(output_dir: str, kwargs: Mapping) -> FileCheck:
@@ -217,19 +283,22 @@ async def _files_ok(output_dir: str, umbrella_job_id: str, checks: Sequence[File
     missing = await asyncio.to_thread(_first_missing, list(checks))
     if missing is None:
         return True
-    await _finish(output_dir, umbrella_job_id, status="failed", error=f"{prefix} {missing.what} at {missing.directory}")
+    error = f"{prefix} {missing.what} at {missing.directory}"
+    if missing.unknown_reason:
+        error += f" (graph count unknown: {missing.unknown_reason[0]})"
+    await _finish(output_dir, umbrella_job_id, status="failed", error=error)
     return False
 
 
 async def start_pipeline(
     input_dir: str,
     output_dir: str,
-    path_to_graph: str,
     path_sk_with_hull: str,
     crop_path: str,
     dataset: str,
     models_path: str,
     datasets_root: str,
+    path_to_graph: str | None = None,
     sk_qc_path: str | None = None,
     njobs: int | None = None,
     parallel: bool = False,
@@ -248,6 +317,9 @@ async def start_pipeline(
     ctx: Context | None = None,
 ) -> dict:
     """Launch the full Champollion pipeline (all 6 stages sequentially). Returns a pipeline job_id immediately.
+
+    ``path_to_graph`` is optional: when omitted, stage 2 passes no ``--path_to_graph`` and champollion_pipeline
+    graph discovery finds each subject's graph; the graph checks then ask that discovery for the graph count.
 
     ``reference_data_dir`` is optional and forwarded to stage 6 (snapshots) for UMAP plots.
 
@@ -460,7 +532,7 @@ async def _launch_stage(stage_name: str, umbrella_output_dir: str, **kwargs) -> 
         return await stages.start_cortical_tiles(
             input_dir=kwargs["input_dir"],
             output_dir=str(Path(umbrella_output_dir) / DERIVATIVES_SUBDIR),
-            path_to_graph=kwargs["path_to_graph"],
+            path_to_graph=kwargs.get("path_to_graph"),
             path_sk_with_hull=kwargs["path_sk_with_hull"],
             sk_qc_path=kwargs.get("sk_qc_path"),
             njobs=kwargs.get("njobs"),
