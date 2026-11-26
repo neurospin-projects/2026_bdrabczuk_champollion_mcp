@@ -28,7 +28,7 @@ Extracts 28 standardized sulcal region crops from Morphologist's graphs.
 |-----------|------|----------|-------|
 | `input_dir` | str | yes | Morphologist `subjects/` dir (read-only safe) |
 | `output_dir` | str | yes | The derivatives dir (`<dataset root>/derivatives/`); writes `cortical_tiles-{YEAR}/crops/{masks}/2mm/` (`{masks}` defaults to `canonical_25`) |
-| `path_to_graph` | str | yes | Relative path to `.arg` graph from subject dir. Supports `*` wildcards. E.g. `t1mri/default_acquisition/default_analysis/folds/3.1` |
+| `path_to_graph` | str | no | Relative path to `.arg` graph from subject dir. Supports `*` wildcards. E.g. `t1mri/default_acquisition/default_analysis/folds/3.1`. Omitted (default): champollion_pipeline graph discovery finds each subject's graph, whatever the layout; `start_pipeline` then counts the graphs by running that discovery (a count that cannot be obtained fails the check, reason named) |
 | `path_sk_with_hull` | str | yes | Relative path to skeleton dir. E.g. `t1mri/default_acquisition/default_analysis/segmentation` |
 | `sk_qc_path` | str | no | TSV file with `participant_id` and `qc` columns for filtering |
 | `njobs` | int | no | CPU cores (default: auto) |
@@ -42,7 +42,7 @@ Output: `{output_dir}/cortical_tiles-{YEAR}/crops/{masks}/2mm/` — 28 region fo
 
 > **CLI-only flags (not exposed via MCP):** `--input-types` (default `skeleton foldlabel`), `--with-distbottom` (opt-in distbottom generation), `--skip-distbottom` (deprecated no-op; distbottom is off by default). Do not attempt to pass these through the MCP tool.
 
-**Default `path_to_graph` by mode:**
+**`path_to_graph` values when you give one:**
 - Non-BIDS: `t1mri/default_acquisition/default_analysis/folds/3.1`
 - BIDS (`bids=True`): `t1mri/default_acquisition/0/folds/3.1`
 - Wildcard fallback: `t1mri/default_acquisition/*/folds/3.1`

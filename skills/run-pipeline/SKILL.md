@@ -66,7 +66,7 @@ Default `output_dir` per tool (each tool appends its own subfolders, so the valu
 - `start_snapshots`: `./data/{dataset}/derivatives/champollion_V1/snapshots/` (images are written straight into it)
 - `start_config` takes no `output_dir`: its `output` is a configs root (region YAMLs land at `{output}/dataset/{dataset}/`); ask the user whether to override it; if omitted, the pipeline default configs root `<D>/<dataset>/derivatives/champollion_V1/configs` applies (`<D>` = parent of the `<dataset>` directory in `crop_path`).
 
-**Default `path_to_graph`**:
+**Default `path_to_graph`**: optional; leave it out and champollion_pipeline graph discovery finds each subject's graph in any layout. Values when you give one:
 - Non-BIDS: `t1mri/default_acquisition/default_analysis/folds/3.1`
 - BIDS (`bids=True`): `t1mri/default_acquisition/0/folds/3.1`
 
@@ -97,7 +97,7 @@ Extracts 28 standardized sulcal region crops from the graphs.
 |-----------|-------------|
 | `input_dir` | Morphologist `subjects/` directory (from stage 1: `{output_dir}/derivatives/morphologist-{version}/subjects/`, `output_dir` = stage 1's dataset root) |
 | `output_dir` | The derivatives directory (`<dataset root>/derivatives/`) — writes to `{output_dir}/cortical_tiles-{YEAR}/crops/{masks}/2mm/` (`{masks}` = the `masks` parameter, default `canonical_25`) |
-| `path_to_graph` | Relative path pattern to the `.arg` graph inside each subject folder. Supports `*` wildcards. Common value: `t1mri/default_acquisition/default_analysis/folds/3.1` |
+| `path_to_graph` | Optional. Unset leaves graph finding to champollion_pipeline graph discovery. Relative path pattern to the `.arg` graph inside each subject folder. Supports `*` wildcards. Common value: `t1mri/default_acquisition/default_analysis/folds/3.1` |
 | `path_sk_with_hull` | Relative path to skeleton directory inside each subject folder. Common value: `t1mri/default_acquisition/default_analysis/segmentation` |
 
 **Optional:**
@@ -244,7 +244,7 @@ Then ask which snapshot types they want (at least one source directory is requir
 start_pipeline(
   input_dir=<raw T1 NIfTI dir (stage 1 input)>,
   output_dir=<dataset root R: Morphologist writes here, cortical_tiles writes R/derivatives>,
-  path_to_graph=<relative path to the .arg graph, e.g. t1mri/default_acquisition/default_analysis/folds/3.1>,
+  path_to_graph=<optional: relative path to the .arg graph, e.g. t1mri/default_acquisition/default_analysis/folds/3.1; omit for graph discovery>,
   path_sk_with_hull=<relative path to the skeleton dir, e.g. t1mri/default_acquisition/default_analysis/segmentation>,
   crop_path=<crops/canonical_25/2mm dir that stage 2 produces under R/derivatives/cortical_tiles-*/ (stage 3 input)>,
   dataset=<dataset name>,

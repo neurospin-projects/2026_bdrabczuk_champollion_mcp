@@ -189,8 +189,8 @@ async def start_morphologist(
 async def start_cortical_tiles(
     input_dir: str,
     output_dir: str,
-    path_to_graph: str,
     path_sk_with_hull: str,
+    path_to_graph: str | None = None,
     sk_qc_path: str | None = None,
     njobs: int | None = None,
     masks: str | None = None,
@@ -200,13 +200,17 @@ async def start_cortical_tiles(
     log: bool = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Launch Stage 2: extract 28 sulcal region crops with cortical_tiles."""
+    """Launch Stage 2: extract 28 sulcal region crops with cortical_tiles.
+
+    ``path_to_graph`` is optional: when omitted, champollion_pipeline graph discovery finds each subject's graph.
+    """
     _require_absolute(input_dir, "input_dir")
     _require_absolute(output_dir, "output_dir")
     roots = await get_roots(ctx)
     validate_within_roots(input_dir, roots, "input_dir")
     validate_within_roots(output_dir, roots, "output_dir")
-    validate_subject_subpath(path_to_graph, roots, "path_to_graph")
+    if path_to_graph is not None:
+        validate_subject_subpath(path_to_graph, roots, "path_to_graph")
     validate_subject_subpath(path_sk_with_hull, roots, "path_sk_with_hull")
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -224,11 +228,11 @@ async def start_cortical_tiles(
         str(script),
         input_dir,
         output_dir,
-        "--path_to_graph",
-        path_to_graph,
         "--path_sk_with_hull",
         path_sk_with_hull,
     ]
+    if path_to_graph is not None:
+        argv += ["--path_to_graph", path_to_graph]
     if sk_qc_path:
         argv += ["--sk_qc_path", sk_qc_path]
     if njobs is not None:
